@@ -182,6 +182,7 @@
                (:file "monad/free")
                (:file "seq")
                (:file "system")
+               (:file "io")
                (:file "prelude")))
 
 (when (member (getenv "COALTON_PORTABLE_BIGFLOAT") '("1" "true" "t") :test 'equalp)
