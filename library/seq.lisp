@@ -10,7 +10,9 @@
    (#:optional #:coalton-library/optional)
    (#:cell #:coalton-library/cell)
    (#:vector #:coalton-library/vector)
-   (#:iter #:coalton-library/iterator))
+   (#:iter #:coalton-library/iterator)
+   (#:list #:coalton-library/list)
+   (#:split #:coalton-library/split))
   (:export
    #:Seq
    #:new
@@ -252,6 +254,29 @@ a new `Seq` instance."
                (iter:every! (fn ((Tuple x y)) (== x y))
                             (iter:zip! (iter:into-iter a)
                                        (iter:into-iter b)))))))
+
+  (define-instance (split:Splittable Seq)
+    (define (split:split delim xs)
+      (let ((blocks (cell:new Nil))
+            (current-block (cell:new (new)))
+            (iter (iter:into-iter xs)))
+        
+        (iter:for-each! (fn (x)
+                          (cond
+                            ((== x delim)
+                             (cell:push! blocks (cell:read current-block))
+                             (cell:write! current-block (new))
+                             Unit)
+                            (True
+                             (cell:write! current-block (push (cell:read current-block) x))
+                             Unit)))
+                        iter)
+        
+        (unless (empty? (cell:read current-block))
+          (cell:push! blocks (cell:read current-block))
+          Unit)
+        
+        (iter:into-iter (list:reverse (cell:read blocks))))))
 
   ;;
   ;; Helpers

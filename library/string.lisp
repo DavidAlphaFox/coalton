@@ -11,12 +11,15 @@
    #:Vector)
   (:local-nicknames
    (#:cell #:coalton-library/cell)
-   (#:iter #:coalton-library/iterator))
+   (#:iter #:coalton-library/iterator)
+   (#:list #:coalton-library/list)
+   (#:split #:coalton-library/split))
   (:export
    #:concat
    #:reverse
    #:length
    #:substring
+   #:bisect
    #:split
    #:strip-prefix
    #:strip-suffix
@@ -25,7 +28,8 @@
    #:ref-unchecked
    #:substring-index
    #:substring?
-   #:chars))
+   #:chars
+   #:delim-split))
 
 
 (in-package #:coalton-library/string)
@@ -65,9 +69,9 @@
       (lisp String (real-start real-end str)
         (cl:subseq str real-start real-end))))
 
-  (declare split (UFix -> String -> (Tuple String String)))
-  (define (split n str)
-    "Splits a string into a head and tail at the nth index."
+  (declare bisect (UFix -> String -> (Tuple String String)))
+  (define (bisect n str)
+    "Bisects a string into a head and tail at the nth index."
     (Tuple (substring str 0 n)
            (substring str n (length str))))
   
@@ -134,6 +138,12 @@ does not have that suffix."
   (define (chars str)
     "Returns an iterator over the characters in `str`."
     (iter:into-iter str))
+  
+  (declare split (Char -> String -> (List String)))
+  (define (split ch str)
+    "Splits a string with a specified single-character delimeter."
+    (map (fn (x) (the String (into x)))
+         (iter:collect! (split:split ch (the (List Char) (into str))))))
 
   ;;
   ;; Instances

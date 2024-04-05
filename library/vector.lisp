@@ -9,7 +9,8 @@
    (#:list #:coalton-library/list)
    (#:cell #:coalton-library/cell)
    (#:iter #:coalton-library/iterator)
-   (#:ram #:coalton-library/randomaccess))
+   (#:ram #:coalton-library/randomaccess)
+   (#:split #:coalton-library/split))
   (:export
    #:Vector
    #:new
@@ -348,7 +349,19 @@
       vec))
 
   (define-instance (Default (Vector :a))
-    (define default new)))
+    (define default new))
+
+  (declare list->vec (List :a -> Vector :a))
+  (define (list->vec x)
+    (into x))
+
+  (declare vec->list (Vector :a -> List :a))
+  (define (vec->list x)
+    (into x))
+
+  (define-instance (split:Splittable Vector)
+    (define (split:split delim v)
+      (map list->vec (split:split delim (vec->list v))))))
 
 (cl:defmacro make (cl:&rest elements)
   "Construct a `Vector' containing the ELEMENTS, in the order listed."
