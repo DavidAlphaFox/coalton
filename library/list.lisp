@@ -10,8 +10,7 @@
   (:local-nicknames
    (#:cell #:coalton-library/cell)
    (#:iter #:coalton-library/iterator)
-   (#:arith #:coalton-library/math/arith)
-   (#:split #:coalton-library/split))
+   (#:arith #:coalton-library/math/arith))
   (:export
    #:head
    #:tail
@@ -637,23 +636,46 @@ This function is equivalent to all size-N elements of `(COMBS L)`."
                                 (map (Cons x) (combsOf (- n 1) xs)) ; combs with X
                                 (combsOf n xs))))))) ; and without x
 
+  (declare split ((Eq :a) => :a -> (List :a) -> (iter:Iterator (List :a))))
+  (define (split delim xs)
+    (let ((blocks (cell:new Nil))
+          (current-block (cell:new Nil))
+          (iter (iter:into-iter xs)))
+        
+      (iter:for-each! (fn (x)
+                        (cond
+                          ((== x delim)
+                           (cell:push! blocks (reverse (cell:read current-block)))
+                           (cell:write! current-block nil)
+                           Unit)
+                          (True
+                           (cell:push! current-block x)
+                           Unit)))
+                      iter)
+        
+      (unless (null? (cell:read current-block))
+        (cell:push! blocks (reverse (cell:read current-block)))
+        Unit)
+        
+      (iter:into-iter (reverse (cell:read blocks)))))
+
   ;;
   ;; Instances
   ;;
 
   (define-instance (Eq :a => Eq (List :a))
-    (define (== a b)
-      (match a
-        ((Cons x xs)
-         (match b
-           ((Cons y ys)
-            (and (== x y)
-                 (== xs ys)))
-           (_ False)))
-        ((Nil)
-         (match b
-           ((Nil) True)
-           (_ False))))))
+      (define (== a b)
+          (match a
+            ((Cons x xs)
+             (match b
+               ((Cons y ys)
+                (and (== x y)
+                     (== xs ys)))
+               (_ False)))
+            ((Nil)
+             (match b
+               ((Nil) True)
+               (_ False))))))
 
   ;; <=> on lists uses lexographic order, like strings.
   ;; Nil is the smallest list, and is LT any non-nil list.
@@ -756,30 +778,7 @@ This function is equivalent to all size-N elements of `(COMBS L)`."
         ((Some a) (Cons a Nil)))))
 
   (define-instance (Default (List :a))
-    (define (default) Nil))
-
-  (define-instance (split:Splittable List)
-    (define (split:split delim xs)
-      (let ((blocks (cell:new Nil))
-            (current-block (cell:new Nil))
-            (iter (iter:into-iter xs)))
-        
-        (iter:for-each! (fn (x)
-                          (cond
-                            ((== x delim)
-                             (cell:push! blocks (reverse (cell:read current-block)))
-                             (cell:write! current-block nil)
-                             Unit)
-                            (True
-                             (cell:push! current-block x)
-                             Unit)))
-                        iter)
-        
-        (unless (null? (cell:read current-block))
-          (cell:push! blocks (reverse (cell:read current-block)))
-          Unit)
-        
-        (iter:into-iter (reverse (cell:read blocks)))))))
+    (define (default) Nil)))
 
 
 

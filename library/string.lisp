@@ -12,15 +12,13 @@
   (:local-nicknames
    (#:cell #:coalton-library/cell)
    (#:iter #:coalton-library/iterator)
-   (#:list #:coalton-library/list)
-   (#:split #:coalton-library/split))
+   (#:list #:coalton-library/list))
   (:export
    #:concat
    #:reverse
    #:length
    #:substring
    #:bisect
-   #:split
    #:strip-prefix
    #:strip-suffix
    #:parse-int
@@ -29,7 +27,7 @@
    #:substring-index
    #:substring?
    #:chars
-   #:delim-split))
+   #:split))
 
 
 (in-package #:coalton-library/string)
@@ -143,7 +141,7 @@ does not have that suffix."
   (define (split ch str)
     "Splits a string with a specified single-character delimeter."
     (map (fn (x) (the String (into x)))
-         (iter:collect! (split:split ch (the (List Char) (into str))))))
+         (iter:collect! (list:split ch (the (List Char) (into str))))))
 
   ;;
   ;; Instances

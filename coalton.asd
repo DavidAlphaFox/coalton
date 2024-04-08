@@ -165,7 +165,6 @@
                (:file "randomaccess")
                (:file "cell")
                (:file "iterator")
-               (:file "split")
                (:file "optional")
                (:file "result")
                (:file "tuple")

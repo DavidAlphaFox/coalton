@@ -18,12 +18,12 @@
 ;;;
 
 (define-test split-list ()
-  (is (== (iter:collect! (split:split #\. (iter:collect! (string:chars *split-path*)))) *split-path-undotted*))
-  (is (== (iter:collect! (split:split #\/ (iter:collect! (string:chars *split-path*)))) *split-path-unslashed*))
-  (is (== (iter:collect! (split:split 2 (make-list 1 2 3 4 2 5 2))) (make-list (make-list 1)
+  (is (== (iter:collect! (list:split #\. (iter:collect! (string:chars *split-path*)))) *split-path-undotted*))
+  (is (== (iter:collect! (list:split #\/ (iter:collect! (string:chars *split-path*)))) *split-path-unslashed*))
+  (is (== (iter:collect! (list:split 2 (make-list 1 2 3 4 2 5 2))) (make-list (make-list 1)
                                                                                (make-list 3 4)
                                                                                (make-list 5))))
-  (is (== (iter:collect! (split:split #\A (iter:collect! (string:chars "BANANA"))))
+  (is (== (iter:collect! (list:split #\A (iter:collect! (string:chars "BANANA"))))
           (make-list (make-list #\B)
                      (make-list #\N)
                      (make-list #\N)))))
@@ -34,9 +34,9 @@
 
 
 (define-test split-vector ()
-  (is (== (iter:collect! (split:split #\. (list->vec (iter:collect! (string:chars *split-path*)))))
+  (is (== (iter:collect! (vector:split #\. (list->vec (iter:collect! (string:chars *split-path*)))))
           (map list->vec *split-path-undotted*)))
-  (is (== (iter:collect! (split:split #\/ (list->vec (iter:collect! (string:chars *split-path*)))))
+  (is (== (iter:collect! (vector:split #\/ (list->vec (iter:collect! (string:chars *split-path*)))))
           (map list->vec *split-path-unslashed*))))
 
 ;;;
@@ -51,6 +51,6 @@
 
 (define-test split-seq ()
   (is (== (the (List (seq:Seq Integer))
-               (iter:collect! (split:split 5 (seq-num-list))))
+               (iter:collect! (seq:split 5 (seq-num-list))))
           (make-list (the (seq:Seq Integer) (iter:collect! (iter:up-to 5)))
                      (the (seq:Seq Integer) (iter:collect! (map (fn (x) (+ x 6)) (iter:up-to 4))))))))

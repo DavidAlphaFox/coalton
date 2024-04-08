@@ -9,8 +9,7 @@
    (#:list #:coalton-library/list)
    (#:cell #:coalton-library/cell)
    (#:iter #:coalton-library/iterator)
-   (#:ram #:coalton-library/randomaccess)
-   (#:split #:coalton-library/split))
+   (#:ram #:coalton-library/randomaccess))
   (:export
    #:Vector
    #:new
@@ -33,6 +32,7 @@
    #:last
    #:last-unsafe
    #:extend!
+   #:split
    #:find-elem
    #:append
    #:swap-remove!
@@ -248,15 +248,27 @@
      iter)
     Unit)
 
+  (declare list->vec (List :a -> Vector :a))
+  (define (list->vec x)
+    (into x))
+
+  (declare vec->list (Vector :a -> List :a))
+  (define (vec->list x)
+    (into x))
+
+  (declare split ((Eq :a) => :a -> (Vector :a) -> (iter:Iterator (Vector :a))))
+  (define (split delim v)
+    (map list->vec (list:split delim (vec->list v))))
+
   ;;
   ;; Instances
   ;;
 
   (define-instance (Eq :a => Eq (Vector :a))
-    (define (== v1 v2)
-      (if (/= (length v1) (length v2))
-          False
-          (iter:every! id (iter:zip-with! == (iter:into-iter v1) (iter:into-iter v2))))))
+      (define (== v1 v2)
+          (if (/= (length v1) (length v2))
+              False
+              (iter:every! id (iter:zip-with! == (iter:into-iter v1) (iter:into-iter v2))))))
 
   (define-instance (Semigroup (Vector :a))
     (define <> append))
@@ -349,19 +361,7 @@
       vec))
 
   (define-instance (Default (Vector :a))
-    (define default new))
-
-  (declare list->vec (List :a -> Vector :a))
-  (define (list->vec x)
-    (into x))
-
-  (declare vec->list (Vector :a -> List :a))
-  (define (vec->list x)
-    (into x))
-
-  (define-instance (split:Splittable Vector)
-    (define (split:split delim v)
-      (map list->vec (split:split delim (vec->list v))))))
+    (define default new)))
 
 (cl:defmacro make (cl:&rest elements)
   "Construct a `Vector' containing the ELEMENTS, in the order listed."
