@@ -1,4 +1,4 @@
-(coalton-library/utils:defstdlib-package #:coalton-library/io
+(coalton-library/utils:defstdlib-package #:coalton-library/io ;; files
   (:use
    #:coalton
    #:coalton-library/classes
@@ -69,14 +69,14 @@
 (cl:declaim #.coalton-impl/settings:*coalton-optimize-library*)
 
 ;;;
-;;; Working with Directories
+;;; Working with directories
 ;;;
 
 (coalton-toplevel
 
   (declare directory-exists-p (String -> Boolean))
   (define (directory-exists-p dir)
-    "Checks whether a directory exists"
+    "Checks whether a directory exists."
     (lisp Boolean (dir)
       (cl:if (uiop:directory-exists-p dir)
              cl:t
@@ -97,6 +97,7 @@
   (declare print-directory-contents (String -> String))
   (define (print-directory-contents dir)
     "Prints all files and subdirectories of a directory."
+    ;; trace
     (lisp String (dir)
       (cl:let ((subdirs (uiop:subdirectories dir))
                (dirfiles (uiop:directory-files dir)))
@@ -122,25 +123,31 @@
 ;;; Current working directory
 ;;;
 
+;; autocurrying -reader monad
 (coalton-toplevel
 
   (declare cwd (Unit -> String))
   (define (cwd)
-    "Returns the Current Working Directory"
+    "Returns the current working directory."
     (lisp String ()
       (cl:namestring (uiop:getcwd))))
 
-  (declare chdir (String -> Unit))
-  (define (chdir dir)
+  (declare pwd (Unit -> String))
+  (define (pwd)
+    "Returns the current working directory."
+    (cwd))
+
+  (declare cd (String -> Unit))
+  (define (cd dir)
     "Changes the current working directory"
     (lisp UFix (dir)
       (uiop:chdir dir))
     (traceobject "Current Working Directory" (cwd)))
 
-  (declare back-up (Unit -> Unit))
-  (define (back-up)
+  (declare back (Unit -> Unit))
+  (define (back)
     "Returns the current working directory one level up."
-    (chdir ".."))
+    (cd ".."))
 
   (declare cwd-relative-pathname (String -> String))
   (define (cwd-relative-pathname name)
@@ -157,15 +164,15 @@
     "Returns all subdirectories in the current working directory."
     (subdirectories (cwd)))
 
-  (declare pwd (Unit -> String))
-  (define (pwd)
+  (declare ls (Unit -> String))
+  (define (ls)
     "Prints all contents of the current working directory."
     (print-directory-contents (cwd)))
 
   (declare system-relative-cwd (String -> Unit))
   (define (system-relative-cwd system-name)
     "Sets the current working directory to the given asdf system's directory."
-    (chdir (system-relative-pathname system-name ""))))
+    (cd (system-relative-pathname system-name ""))))
 
 ;;;
 ;;; Basic file operations
@@ -218,6 +225,14 @@
                 (uiop:read-file-string resolved-filename)))
         None))
 
+  (declare cat (String -> Unit))
+  (define (cat filename)
+    "Traces the contents of a given file."
+    (match (file->string filename)
+      ((Some s)
+       (traceobject "File contents" s))
+      ((None) (trace "File empty."))))
+
   (declare file->line (String -> UFix -> (Optional String)))
   (define (file->line filename line)
     "Reads the nth line of a file."
@@ -240,30 +255,48 @@
 ;;; Streams
 ;;;
 
+;; defining acceptable keyword options
+
 (coalton-toplevel
 
-  (repr :native cl:stream)
-  (define-type Stream
-    "A stream represented by a Common Lisp stream.")
-
-  (repr :native cl:broadcast-stream)
-  (define-type BroadcastStream
-    "A `BroadcastStream` is an output stream which passes output to multiple defined streams.")
-
-  (repr :native cl:concatenated-stream)
-  (define-type ConcatenatedStream
-    "A `ConcatenatedStream` is a composite input stream comprised of zero or more `Stream`s, which are read in order.")
-
-  (repr :native cl:echo-stream)
-  (define-type EchoStream)
+  (repr :enum)
+  (Define-type DirectionOption
+    Input
+    Output)
   
-  (repr :native cl:two-way-stream)
-  (define-type TwoWayStream
-    "A stream for both input and output.")
+  (repr :enum)
+  (define-type IfExistsOption
+    ExistsError
+    Append
+    Supersede)
 
-  (repr :native cl:string-stream)
-  (define-type StringStream
-    "A String Stream."))
+  (repr :enum)
+  (define-type IfDoesNotExistOption
+    DoesNotExistError
+    Create))
+
+(cl:defvar *if-exists-options*
+  '((IfExistsOption/ExistsError :error)
+    (IfExistsOption/Append :append)
+    (IfExistsOption/Supersede :supersede)))
+
+(cl:defun match-if-exists-option (x)
+  (cl:second (cl:assoc x *if-exists-options*)))
+
+(cl:defvar *if-does-not-exist-options*
+  '((IfExistsOption/DoesNotExistError :error)
+    (IfExistsOption/Append :create)))
+
+(cl:defun match-if-does-not-exist-option (x)
+  (cl:second (cl:assoc x *if-does-not-exist-options*)))
+
+(cl:defvar *direction-options*
+  '((DirectionOption/Input :input)
+    (DirectionOption/Output :output)))
+
+(cl:defun match-direction-option (x)
+  (cl:second (cl:assoc x *direction-options*)))
+
 
 ;;;
 ;;; File streams
@@ -271,87 +304,120 @@
 
 (coalton-toplevel
 
+  (repr :native cl:stream)
+  (define-type Stream
+    "A stream represented by a Common Lisp stream.")
+  
   (repr :native cl:file-stream)
   (define-type FileStream))
 
-;; defining acceptable keyword options
 
-(cl:defun direction-option-p (x)
-  (cl:member x '(:input :output :io :probe)))
+(coalton-toplevel                       
 
-(cl:deftype direction-option ()
-  `(cl:satisfies direction-option-p))
-
-(cl:defun if-exists-option-p (x)
-  (cl:member x '(:error :new-version :rename :rename-and-delete :overwrite :append :supersede Nil)))
-
-(cl:deftype if-exists-option ()
-  `(cl:satisfies if-exists-option-p))
-
-(cl:defun if-does-not-exist-option-p (x)
-  (cl:member x '(:error :create Nil)))
-
-(cl:deftype if-does-not-exist-option ()
-  `(cl:satisfies if-does-not-exist-option-p))
-
-(coalton-toplevel
-
-  (repr :native direction-option)
-  (define-type DirectionOption)
-
-  (repr :native if-exists-option)
-  (define-type IfExistsOption)
-
-  (repr :native if-does-not-exist-option)
-  (define-type IfDoesNotExistOption)
-
+  ;; open, close, write, read should eventually be a typeclass over different stream types
+  
   (declare open (String -> DirectionOption -> IfExistsOption -> IfDoesNotExistOption -> FileStream))
   (define (open file direction if-exists if-does-not-exist)
     "Opens a filestream given a file."
     (lisp FileStream (file direction if-exists if-does-not-exist)
-      (cl:open file :direction direction :if-exists if-exists :if-does-not-exist if-does-not-exist)))
+      (cl:let ((file (cwd-relative-pathname file))
+               (direct (match-direction-option direction))
+               (exists (match-if-exists-option if-exists))
+               (doesnt-exist (match-if-does-not-exist-option if-does-not-exist)))
+        (cl:open file :direction direct :if-exists exists :if-does-not-exist doesnt-exist))))
 
-  (declare close (Stream -> Unit))
+  (declare write (String -> FileStream -> String))
+  (define (write data stream)
+    "Writes a string to the stream."
+    (lisp String (data stream)
+      (cl:write-sequence data stream)))
+
+  (declare write-byte (Integer -> FileStream -> Integer))
+  (define (write-byte x stream)
+    (lisp Integer (x stream)
+      (cl:write-byte x stream)))
+  
+  (declare read (FileStream -> String))
+  (define (read stream)
+    (lisp String (stream)
+      (cl:read stream)))
+  
+  (declare close (FileStream -> Unit))
   (define (close stream)
     "Closes a stream."
-    (lisp Unit (stream)
-      (cl:close stream)))
+    (lisp Boolean (stream)
+      (cl:close stream))
+    (traceobject "Stream closed" stream))
 
   (declare load (String -> Boolean))
-  (define (load file)
+  (define (load filename)
     "Loads a lisp file."
-    (lisp Boolean (file)
-      (cl:load file))))
+    (let ((file (cwd-relative-pathname filename)))
+      (lisp Boolean (file)
+        (cl:load file))))
 
-;; synonym streams
+  ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+  ;;
+  ;; there are two options for write-to-file, one using with-open-file and one using native coalton code.
+  ;; We'll pick one in the review process
+  ;;
+
+  (declare write-to-file (String -> IFExistsOption -> IfDoesNotExistOption -> String -> Unit))
+  (define (write-to-file filename if-exists if-does-not-exist data)
+    "Writes data to a given file, with if-exists options `ExistsError` `Append` and `Supersede`, and if-does-not-exist options `DoesNotExistError` and `Create`."
+    (let ((file (cwd-relative-pathname filename)))
+      (lisp Boolean (file if-exists if-does-not-exist data)
+        (cl:let ((exists (match-if-exists-option if-exists))
+                 (doesnt (match-if-does-not-exist-option if-does-not-exist)))
+          (cl:with-open-file (stream file :direction :output :if-exists exists :if-does-not-exist doesnt)
+            (cl:write-sequence data stream)))
+        cl:t))
+    (traceobject "Data written to" filename))
+
+  ;; just coalton
+  (define (write-to-file2 filename if-exists if-does-not-exist data)
+    (let ((Stream (open filename Output if-exists if-does-not-exist)))
+      (write data stream)
+      (close stream))
+    (traceobject "Data written to" filename)))
+
+  ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;;;
+;;; Other stream types that might be useful
+;;;
+
+
+(coalton-toplevel
+  (repr :native cl:broadcast-stream)
+  (define-type DualStream
+    "A `BroadcastStream` is an output stream which passes output to multiple defined streams.")
+
+  (define (make-dualstream stream-a stream-b)
+    "Makes an output stream which outputs to both stream-a and stream-b."
+    (lisp DualStream (stream-a stream-b)
+      (cl:make-broadcast-stream stream-a stream-b)))
+  )
 
 (coalton-toplevel
 
-  (repr :native cl:synonym-stream)
-  (define-type SynonymStream)
+  
+  (repr :native cl:concatenated-stream)
+  (define-type ConcatenatedStream
+    "A `ConcatenatedStream` is a composite input stream comprised of zero or more `Stream`s, which are read in order.")
 
-  (define (make-synonym-stream stream)
-    (lisp Stream (stream)
-      (cl:make-synonym-stream stream))))
-
-#+ignore(coalton-toplevel
-
-  #+ignore(define (write-to-file file if-exists if-does-not-exist data)
-    (lisp Unit (file if-exists if-does-not-exist data)
-      (cl:with-open-file (stream file
-                                 :direction :output
-                                 :if-exists if-exists
-                                 :if-does-not-exist if-does-not-exist)
-        (cl:write-sequence data stream) ))
-    (traceobject "Data written to file" file)))
-
-;; file open, file close, file read, file write
-
-;; 
+  (repr :native cl:string-stream)
+  (define-type StringStream
+    "A String Stream."))
 
 
 
-;; currently unused, but I think it may prove useful- depends on Splittable PR
+
+
+
+
+
+;; currently unused, but I think it would be useful for seaching by type, etc. - depends on Splittable PR
 #+ignore(coalton-toplevel
 
           (define-struct FilePath

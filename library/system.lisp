@@ -9,6 +9,7 @@
    #:sleep)
   (:export
    #:Keyword
+   #:string->keyword
    #:which-architecture
    #:which-os
    #:which-hostname
@@ -66,6 +67,11 @@ While the result will always contain microseconds, some implementations may retu
   (repr :native cl:keyword)
   (define-type Keyword
     "A Keyword represented by a Common Lisp keyword.")
+
+  (declare string->keyword (String -> Keyword))
+  (define (string->keyword s)
+    (lisp Keyword (s)
+      (cl:intern (cl:STRING-UPCASE s) 'cl:keyword)))
   
   (declare which-architecture (Unit -> Keyword))
  (define (which-architecture)
