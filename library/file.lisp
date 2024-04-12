@@ -1,4 +1,4 @@
-(coalton-library/utils:defstdlib-package #:coalton-library/io ;; files
+(coalton-library/utils:defstdlib-package #:coalton-library/file
   (:use
    #:coalton
    #:coalton-library/classes
@@ -29,14 +29,6 @@
    #:print-directory-contents
    #:system-relative-pathname
 
-   ;; current working directory
-   #:cwd
-   #:chdir
-   #:cwd-relative-pathname
-   #:cwd-files
-   #:cwd-subdirectories
-   #:pwd
-
    ;; file functions
    #:file-exists-p
    #:concat-files
@@ -58,10 +50,9 @@
    #:IfDoesNotExistOption
    #:open
    #:close
-   #:load
-   ))
+   #:load))
 
-(in-package #:coalton-library/io)
+(in-package #:coalton-library/file)
 
 (named-readtables:in-readtable coalton:coalton)
 
@@ -74,57 +65,79 @@
 
 (coalton-toplevel
 
-  (declare directory-exists-p (String -> Boolean))
-  (define (directory-exists-p dir)
+  (repr :native cl:pathname)
+  (define-type Pathname)
+
+  (define-instance (Into String Pathname)
+    (define (into s)
+      (lisp Pathname (s)
+        (cl:pathname s))))
+
+  (define-instance (Into Pathname String)
+    (define (into p)
+      (lisp String (p)
+        (cl:namestring p))))
+
+  (declare merge (Pathname -> Pathname -> Pathname))
+  (define (merge path1 path2)
+      "Merges two pathnames together."
+      (lisp Pathname (path1 path2)
+            (cl:merge-pathnames path1 path2))))
+
+(coalton-toplevel
+
+  (declare directory-exists? (Pathname -> Boolean))
+  (define (directory-exists? dir)
     "Checks whether a directory exists."
     (lisp Boolean (dir)
       (cl:if (uiop:directory-exists-p dir)
              cl:t
              cl:nil)))
 
-  (declare directory-files (String -> (List String)))
+  (declare directory-files (Pathname -> (List String)))
   (define (directory-files dir)
     "Returns all files within a directory."
     (lisp (List String) (dir)
       (uiop:directory-files dir)))
 
-  (declare subdirectories (String -> (List String)))
+  (declare subdirectories (Pathname -> (List String)))
   (define (subdirectories dir)
     "Returns all subdirectories in a given directory."
     (lisp (List String) (dir)
       (uiop:subdirectories dir)))
 
-  (declare print-directory-contents (String -> String))
+  (declare print-directory-contents (Pathname -> Unit))
   (define (print-directory-contents dir)
     "Prints all files and subdirectories of a directory."
-    ;; trace
-    (lisp String (dir)
-      (cl:let ((subdirs (uiop:subdirectories dir))
-               (dirfiles (uiop:directory-files dir)))
-        (cl:if (cl:and (cl:not subdirs)
-                       (cl:not dirfiles))
-               (cl:format cl:nil "Directory ~a is empty" dir)
-               (cl:format cl:nil "~%Contents of Directory ~a:~%~%~a~a"
-                          dir
-                          (cl:if subdirs
-                                 (cl:format cl:nil "Subdirectories:~%~{~a~%~}~%" subdirs)
-                                 "")
-                          (cl:if dirfiles
-                                 (cl:format cl:nil "Files:~%~{~a~%~}" dirfiles)
-                                 ""))))))
+    (trace (lisp String (dir)
+             (cl:let ((subdirs (uiop:subdirectories dir))
+                      (dirfiles (uiop:directory-files dir)))
+               (cl:if (cl:and (cl:not subdirs)
+                              (cl:not dirfiles))
+                      (cl:format cl:nil "Directory ~a is empty" dir)
+                      (cl:format cl:nil "~%Contents of Directory ~a:~%~%~a~a"
+                                 dir
+                                 (cl:if subdirs
+                                        (cl:format cl:nil "Subdirectories:~%~{~a~%~}~%" subdirs)
+                                        "")
+                                 (cl:if dirfiles
+                                        (cl:format cl:nil "Files:~%~{~a~%~}" dirfiles)
+                                        "")))))))
 
-  (declare system-relative-pathname (String -> String -> String))
+  (declare system-relative-pathname (String -> String -> Pathname))
   (define (system-relative-pathname system-name name)
     "Generates a system-relative-pathname for a given filename or path"
-    (lisp String (system-name name)
-      (cl:namestring (asdf:system-relative-pathname system-name name)))))
+    (lisp Pathname (system-name name)
+      (asdf:system-relative-pathname system-name name))))
 
 ;;;
 ;;; Current working directory
 ;;;
 
 ;; autocurrying -reader monad
-(coalton-toplevel
+
+;; maybe to move to shell or nav
+#+ignore(coalton-toplevel
 
   (declare cwd (Unit -> String))
   (define (cwd)
@@ -180,75 +193,67 @@
 
 (coalton-toplevel
 
-  (declare file-exists-p (String -> Boolean))
-  (define (file-exists-p name)
+  (declare file-exists? (Pathname -> Boolean))
+  (define (file-exists? path)
     "Checks whether a file exists."
-    (let file = (cwd-relative-pathname name))
-    (lisp Boolean (file)
-      (cl:if (cl:probe-file file)
+    (lisp Boolean (path)
+      (cl:if (cl:probe-file path)
              cl:t
              cl:nil)))
 
-  (declare concat-files ((List String) -> String -> Unit))
+  (declare concat-files ((List Pathname) -> Pathname -> Unit))
   (define (concat-files inputs output)
     "Concatenates two files into a target file."
-    (let files = (map cwd-relative-pathname inputs))
-    (let output-file = (cwd-relative-pathname output))
-    (lisp Unit (files output-file)
-      (uiop:concatenate-files files output-file))
-    (traceobject "Files combined into" output-file))
+    (lisp Unit (inputs output)
+      (uiop:concatenate-files inputs output))
+    (traceobject "Files combined into" output))
 
-  (declare copy-file (String -> String -> Unit))
+  (declare copy-file (Pathname -> Pathname -> Unit))
   (define (copy-file input output)
     "Copies a file to a target file."
-    (let file = (cwd-relative-pathname input))
-    (let output-file = (cwd-relative-pathname output))
-    (lisp Boolean (file output-file)
-      (uiop:copy-file file output-file))
-    (traceobject "File copied to" output-file))
+    (lisp Boolean (input output)
+      (uiop:copy-file input output))
+    (traceobject "File copied to" output))
 
-  (declare delete-file (String -> Unit))
+  (declare delete-file (Pathname -> Unit))
   (define (delete-file file)
     "Deletes a given file, comments on whether the file exists."
-    (let fl = (cwd-relative-pathname file))
-    (if (lisp Boolean (fl)
-          (uiop:delete-file-if-exists fl))
+    (if (lisp Boolean (file)
+          (uiop:delete-file-if-exists file))
         (traceobject "File deleted" file)
         (traceobject "File not found" file)))
   
-  (declare file->string (String -> (Optional String)))
-  (define (file->string filename)
+  (declare file->string (Pathname -> (Optional String)))
+  (define (file->string filespec)
     "Reads a file into a string."
-    (let resolved-filename = (cwd-relative-pathname filename))
-    (if (file-exists-p filename)
-        (Some (lisp String (resolved-filename)
-                (uiop:read-file-string resolved-filename)))
+    ;(let resolved-filename = (cwd-relative-pathname filename))
+    (if (file-exists? filespec)
+        (Some (lisp String (filespec)
+                (uiop:read-file-string filespec)))
         None))
 
-  (declare cat (String -> Unit))
-  (define (cat filename)
+  (declare cat (Pathname -> Unit))
+  (define (cat filespec)
     "Traces the contents of a given file."
-    (match (file->string filename)
+    (match (file->string filespec)
       ((Some s)
        (traceobject "File contents" s))
       ((None) (trace "File empty."))))
 
-  (declare file->line (String -> UFix -> (Optional String)))
-  (define (file->line filename line)
+  (declare file->line (Pathname -> UFix -> (Optional String)))
+  (define (file->line filespec n)
     "Reads the nth line of a file."
-    (let resolved-filename = (cwd-relative-pathname filename))
-    (if (file-exists-p filename)
-        (Some (Lisp String (resolved-filename line)
-                (uiop:read-file-line resolved-filename :at line)))
+    (if (file-exists? filespec)
+        (Some (Lisp String (filespec n)
+                (uiop:read-file-line filespec :at n)))
         None))
 
-  (declare file->lines (String -> (List String)))
-  (define (file->lines filename)
+  (declare file->lines (Pathname -> (List String)))
+  (define (file->lines filespec)
     "Reads a file into lines."
-    (let resolved-filename = (cwd-relative-pathname filename))
-    (if (file-exists-p filename)
-        (lisp (List String) (resolved-filename)
-          (uiop:read-file-lines resolved-filename))
+    (if (file-exists? filespec)
+        (lisp (List String) (filespec)
+          (uiop:read-file-lines filespec))
         Nil)))
 
 ;;;
@@ -312,7 +317,7 @@
   (define-type FileStream))
 
 
-(coalton-toplevel                       
+#+ignore(coalton-toplevel                       
 
   ;; open, close, write, read should eventually be a typeclass over different stream types
   
@@ -457,4 +462,4 @@
 
 
 #+sb-package-locks
-(sb-ext:lock-package "COALTON-LIBRARY/IO")
+(sb-ext:lock-package "COALTON-LIBRARY/FILE")
