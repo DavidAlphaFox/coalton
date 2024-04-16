@@ -183,6 +183,7 @@
                (:file "seq")
                (:file "system")
                (:file "file")
+               (:file "current-working-directory")
                (:file "prelude")))
 
 (when (member (getenv "COALTON_PORTABLE_BIGFLOAT") '("1" "true" "t") :test 'equalp)
