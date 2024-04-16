@@ -34,14 +34,9 @@
 ;;; These functions use a State Monad to carry a current working pathname
 ;;;
 
-;; potential fix for with-cwd list
-#+ignore(coalton-toplevel
-          (define-type CWDout
-            (Empt)
-            (Path file:Pathname)
-            (Paths (List file:Pathname))
-            (String-In String)
-            (Strings-In (List String))))
+;;;
+;;; Navigation, exploration, and probing
+;;;
 
 (coalton-toplevel
 
@@ -99,58 +94,126 @@
      (path <- state:get)
      (state:put (file:merge (into sub-name) path))))
 
-  (declare exists? (String -> (State:st file:Pathname Unit)))
+  (declare exists? (String -> (State:st file:Pathname Boolean)))
   (define (exists? filename)
     "Checks whether a file or directory exists within the current working directory. "
     (do
      (path <- state:get)
-     (pure (traceobject "File Probe" (if (file:exists? (file:merge path (into filename)))
-                                         filename
-                                         "File not found")))))
+     (pure (let ((ex (file:exists? (file:merge path (into filename)))))
+             (traceobject filename (if ex "File Found" "File Not Found"))
+             ex))))
 
   (declare cat (String -> (State:st file:Pathname Unit)))
   (define (cat filename)
+    "Prints the file to standard-output."
     (do
      (path <- state:get)
-     (pure (file:cat (file:merge path (into filename))))))
+     (pure (file:cat (file:merge path (into filename)))))))
 
+;;
+;; Interacting directories
+;;
+
+(coalton-toplevel
+
+  (declare mkdir (String -> (state:ST file:Pathname Unit)))
+  (define (mkdir dirname)
+    "Makes a subdirectory in the current working directory."
+    (do
+     (path <- state:get)
+     (pure (file:create-directory (file:merge path (into dirname))))))
+
+  (declare rmdir (String -> (state:ST file:Pathname Unit)))
+  (define (rmdir dirname)
+    "Removes a subdirectory from the current working directory."
+    (do
+     (path <- state:get)
+     (pure (file:delete-directory (file:merge path (into dirname))))))
+  
   (declare files (Unit -> (state:ST file:Pathname (List file:Pathname))))
   (define (files)
-    "Returns all files within the current working directory"
+    "Returns all files within the current working directory."
     (do
      (dirpath <- state:get)
      (pure (file:directory-files dirpath))))
 
   (declare subdirs (Unit -> (state:ST file:Pathname (List file:Pathname))))
   (define (subdirs)
-    "Returns all files within the current working directory"
+    "Returns all files within the current working directory."
     (do
      (dirpath <- state:get)
-     (pure (file:subdirectories dirpath))))
+     (pure (file:subdirectories dirpath)))))
 
-  
-  (declare write-to-file (String -> file:IFExistsOption -> file:IFDoesNotExistOption -> String -> (State:ST file:Pathname Unit)))
-  (define (write-to-file filename if-exists if-does-not-exist data)
+;;
+;; Reading and writing to files
+;;
+
+(coalton-toplevel
+
+  (declare copy (String -> String -> (state:ST file:Pathname Unit)))
+  (define (copy input-filename output-filename)
+    "Copies a file to an output file in the same directory."
     (do
      (path <- state:get)
-     (pure (file:write-to-file (fst (state:run (cwd-relative-pathname filename) path)) if-exists if-does-not-exist data)))))
+     (pure (file:copy (file:merge path (into input-filename))
+                      (file:merge path (into output-filename))))))
+
+  (declare move-to (String -> file:Pathname -> (state:ST file:Pathname Unit)))
+  (define (move-to filename directory)
+    "Moves a file from the current working directory to a given directory."
+    (do
+     (path <- state:get)
+     (let ((filepath (file:merge path (into filename))))
+       (pure (progn (file:copy filepath directory)
+                    (file:delete filepath))))))
+
+  (declare rename (String -> String -> (state:ST file:Pathname Unit)))
+  (define (rename filename1 filename2)
+    "Renames a file (destructive)."
+    (do
+     (path <- state:get)
+     (let ((f1 (file:merge path (into filename1)))
+           (f2 (file:merge path (into filename2))))
+       (pure (progn (file:copy f1 f2)
+                    (file:delete f1))))))
+  
+  (declare write (String -> file:IFExistsOption -> file:IFDoesNotExistOption -> String -> (State:ST file:Pathname Unit)))
+  (define (write filename if-exists if-does-not-exist data)
+    "Writes a given data-string to a file."
+    (do
+        (path <- state:get)
+        (pure (file:write-to-file (file:merge path (into filename)) if-exists if-does-not-exist data))))
+
+  (declare read->string (String -> (State:ST file:Pathname (Optional String))))
+  (define (read->string filename)
+    "Reads a file into an `(Optional String)`."
+    (do
+     (path <- state:get)
+     (pure (file:file->string (file:merge path (into filename))))))
+
+  (declare read->line (String -> UFix -> (State:ST file:Pathname (Optional String))))
+  (define (read->line filename n)
+    "Reads a designated line of a file into an `(Optional String)`."
+    (do
+     (path <- state:get)
+     (pure (file:file->line (file:merge path (into filename)) n))))
+
+  (declare read->lines (String -> (State:ST file:Pathname (List String))))
+  (define (read->lines filename)
+    "Reads a file into a list of line strings."
+    (do
+     (path <- state:get)
+     (pure (file:file->lines (file:merge path (into filename)))))))
 
 
 (coalton-toplevel
 
-  ;; TODO should eventually be a macro-
-  ;; which may fix the typing issue
-  (declare with-cwd (file:Pathname -> (List (State:st file:Pathname Unit)) -> (Tuple file:Pathname Unit)))
+  (declare with-cwd (file:Pathname -> (State:st file:Pathname :a) -> (Tuple file:Pathname :a)))
   (define (with-cwd cwd body)
-    "Executes a body of functions in the current working directory"
-    (match body
-      ((Cons x (Nil))
-       (state:run x cwd))
-      ((Cons x xs)
-       (with-cwd (fst (state:run x cwd)) xs))
-      (_ (error "No commands provided to `with-cwd` form."))))
+    "Executes a body of functions in a given working directory"
+    (state:run body cwd))
 
-  (declare with-system-cwd (String -> (List (State:st file:Pathname Unit)) -> (Tuple file:Pathname Unit)))
+  (declare with-system-cwd (String -> (State:st file:Pathname :a) -> (Tuple file:Pathname :a)))
   (define (with-system-cwd system body)
     "Executes a body of functions within an asdf system directory."
     (with-cwd (file:system-relative-pathname system "") body)))
@@ -158,21 +221,40 @@
 ;;
 ;;  A simple test case
 ;;
+
+;; get path, set path , etc
+
+;; look into haskell io monad
 (coalton-toplevel
 
   (define (test1)
     (with-system-cwd "coalton"
-      (make-list (pwd)
-                 (cd-system "computable-reals")
-                 (pwd)
-                 (cd-system "coalton")
-                 (pwd)
-                 (exists? "coalton.asd")
-                 (down "library/")
-                 (pwd)
-                 (exists? "file.lisp")
-                 (cat "file.lisp")
-                 (exists? "files.lisp")))))
+      (do
+       (pwd)
+       (cd-system "computable-reals")
+        (pwd)
+        (cd-system "coalton")
+        (pwd)
+        (exists? "coalton.asd")
+        (down "library/")
+        (pwd)
+        (up)
+        (pwd)
+        (down "library/")
+        (pwd)
+        (exists? "files.lisp")
+        (exists? "file.lisp")
+        (read->line "file.lisp" 0))))
+
+  (define (test2)
+    (with-system-cwd "coalton"
+      (do
+       (down "examples/small-coalton-programs/src/")
+        (cwd)
+        (write "example-file.txt~" file:Supersede file:Create "Wow this works")
+        (cat "example-file.txt~")
+        (write "example-file.txt~" file:Supersede file:Create "Wow this *still* works")
+        (cat "example-file.txt~")))))
 
 #+sb-package-locks
 (sb-ext:lock-package "COALTON-LIBRARY/CURRENT-WORKING-DIRECTORY")

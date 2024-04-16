@@ -11,15 +11,17 @@
                     (#:vec #:coalton-library/vector))
   (:export
    #:Pathname
-   #:Merge
-   
+   #:merge
+   #:exists?
+
+   #:create-directory
+   #:delete-directory
    #:directory-files
    #:subdirectories
    #:print-directory-contents
    #:system-relative-pathname
 
    ;; file functions
-   #:exists?
    #:concat
    #:copy
    #:delete
@@ -30,15 +32,15 @@
 
    
    #:DirectionOption
-   #:DirectionOption/Input
-   #:DirectionOption/Output
+   #:Input
+   #:Output
    #:IfExistsOption
-   #:IfExistsOption/ExistsError
-   #:IfExistsOption/Append
-   #:IfExistsOption/Supersede
+   #:ExistsError
+   #:Append
+   #:Supersede
    #:IfDoesNotExistOption
-   #:IfDoesNotExistOption/DoesNotExistError
-   #:IfDoesNotExistOption/Create
+   #:DoesNotExistError
+   #:Create
    
    #:FileStream
    
@@ -78,15 +80,41 @@
 
   (declare merge (Pathname -> Pathname -> Pathname))
   (define (merge path1 path2)
-      "Merges two pathnames together."
-      (lisp Pathname (path1 path2)
-            (cl:merge-pathnames path1 path2))))
+    "Merges two pathnames together."
+    (lisp Pathname (path1 path2)
+      (cl:merge-pathnames path1 path2)))
+
+  (declare exists? (Pathname -> Boolean))
+  (define (exists? path)
+    "Checks whether a file or directory exists."
+    (lisp Boolean (path)
+      (cl:if (cl:probe-file path)
+             cl:t
+             cl:nil))))
 
 ;;;
 ;;; Working with directories
 ;;;
 
 (coalton-toplevel
+
+  (declare create-directory (Pathname -> Unit))
+  (define (create-directory dir)
+    "Creates a directory if it doesn't exist."
+    (if (exists? dir)
+        (trace "Directory already exists")
+        (traceobject "Directory created"
+                     (lisp Pathname (dir)
+                       (cl:ensure-directories-exist dir)))))
+
+  (declare delete-directory (Pathname -> Unit))
+  (define (delete-directory dir)
+    "Deletes a target directory."
+    (if (exists? dir)
+        (traceobject "Directory deleted"
+                     (lisp Pathname (dir)
+                       (uiop:delete-directory-tree dir :validate cl:t)))
+        (trace "Directory does not exist.")))
 
   (declare directory-files (Pathname -> (List Pathname)))
   (define (directory-files dir)
@@ -130,14 +158,6 @@
 
 (coalton-toplevel
 
-  (declare exists? (Pathname -> Boolean))
-  (define (exists? path)
-    "Checks whether a file or directory exists."
-    (lisp Boolean (path)
-      (cl:if (cl:probe-file path)
-             cl:t
-             cl:nil)))
-
   (declare concat ((List Pathname) -> Pathname -> Unit))
   (define (concat inputs output)
     "Concatenates two files into a target file."
@@ -168,8 +188,6 @@
                 (uiop:read-file-string filespec)))
         None))
 
-  
-
   (declare file->line (Pathname -> UFix -> (Optional String)))
   (define (file->line filespec n)
     "Reads the nth line of a file."
@@ -194,11 +212,6 @@
        (traceobject "File contents" s))
       ((None) (trace "File empty.")))))
 
-;;;
-;;; Streams
-;;;
-
-;; defining acceptable keyword options
 
 (coalton-toplevel
 
@@ -227,8 +240,8 @@
   (cl:second (cl:assoc x *if-exists-options*)))
 
 (cl:defvar *if-does-not-exist-options*
-  '((IfExistsOption/DoesNotExistError :error)
-    (IfExistsOption/Append :create)))
+  '((IfDoesNotExistOption/DoesNotExistError :error)
+    (IfDoesNotExistOption/Create :create)))
 
 (cl:defun match-if-does-not-exist-option (x)
   (cl:second (cl:assoc x *if-does-not-exist-options*)))
@@ -253,8 +266,6 @@
 
 (coalton-toplevel                       
 
-  ;; open, close, write, read should eventually be a typeclass over different stream types
-  
   (declare open (Pathname -> DirectionOption -> IfExistsOption -> IfDoesNotExistOption -> FileStream))
   (define (open filespec direction if-exists if-does-not-exist)
     "Opens a filestream given a file."
@@ -285,7 +296,7 @@
     "Closes a stream."
     (lisp Boolean (stream)
       (cl:close stream))
-    (traceobject "Stream closed" stream))
+    Unit)
 
   (declare load (Pathname -> Boolean))
   (define (load filespec)
@@ -300,16 +311,15 @@
   ;;
 
   (declare write-to-file (Pathname -> IFExistsOption -> IfDoesNotExistOption -> String -> Unit))
-  #+ignore(define (write-to-file filename if-exists if-does-not-exist data)
+  #+ignore(define (write-to-file filepath if-exists if-does-not-exist data)
     "Writes data to a given file, with if-exists options `ExistsError` `Append` and `Supersede`, and if-does-not-exist options `DoesNotExistError` and `Create`."
-    (let ((file (cwd-relative-pathname filename)))
-      (lisp Boolean (file if-exists if-does-not-exist data)
+    (lisp Boolean (filepath if-exists if-does-not-exist data)
         (cl:let ((exists (match-if-exists-option if-exists))
                  (doesnt (match-if-does-not-exist-option if-does-not-exist)))
-          (cl:with-open-file (stream file :direction :output :if-exists exists :if-does-not-exist doesnt)
+          (cl:with-open-file (stream filepath :direction :output :if-exists exists :if-does-not-exist doesnt)
             (cl:write-sequence data stream)))
-        cl:t))
-    (traceobject "Data written to" filename))
+        cl:t)
+    (traceobject "Data written to" filepath))
 
   ;; just coalton
   (define (write-to-file filename if-exists if-does-not-exist data)
