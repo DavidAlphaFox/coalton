@@ -10,16 +10,16 @@
   (:export
    #:Keyword
    #:string->keyword
-   #:which-architecture
-   #:which-os
-   #:which-hostname
-   #:which-implementation
-   #:which-lisp-version
-   #:which-lisp-impl-directory
-   #:which-configuration-pathnames
-   #:which-features
-   #:which-cmd-args
-   #:which-argv0))
+   #:architecture
+   #:os
+   #:hostname
+   #:implementation
+   #:lisp-version
+   #:lisp-impl-directory
+   #:configuration-pathnames
+   #:features
+   #:cmd-args
+   #:argv0))
 
 (in-package #:coalton-library/system)
 
@@ -59,7 +59,7 @@ While the result will always contain microseconds, some implementations may retu
       Unit)))
 
 ;;;
-;;; Gathering System information
+;;; Keywords
 ;;;
 
 (coalton-toplevel
@@ -72,66 +72,76 @@ While the result will always contain microseconds, some implementations may retu
   (define (string->keyword s)
     (lisp Keyword (s)
       (cl:intern (cl:STRING-UPCASE s) 'cl:keyword)))
-  
-  (declare which-architecture (Unit -> Keyword))
- (define (which-architecture)
-   "Returns your system's architecture."
-   (lisp Keyword ()
-     (uiop:architecture)))
 
- (declare which-os (Unit -> Keyword))
- (define (which-os)
-   "Returns your system's Operating System."
-   (lisp Keyword ()
-     (uiop:detect-os)))
+  (define-instance (Into String Keyword)
+    (define (into s)
+      (string->keyword s))))
+;;;
+;;; Gathering System information
+;;;
 
- (declare which-hostname (Unit -> String))
- (define (which-hostname)
-   "Returns your system's Hostname."
-   (lisp String ()
-         (uiop:hostname)))
 
- (declare which-implementation (Unit -> Keyword))
- (define (which-implementation)
-   "Returns your lisp implementation."
-   (lisp Keyword ()
-     (uiop:implementation-type)))
+(coalton-toplevel
 
- (declare which-lisp-version (Unit -> String))
- (define (which-lisp-version)
-   "Returns the version of your lisp implementation."
-   (lisp String ()
-         (uiop:lisp-version-string)))
+  (declare architecture (Unit -> Keyword))
+  (define (architecture)
+    "Returns your system's architecture."
+    (lisp Keyword ()
+      (uiop:architecture)))
 
- (declare which-lisp-impl-directory (Unit -> String))
- (define (which-lisp-impl-directory)
-   "Returns your lisp implementation's directory."
-   (lisp String ()
-         (cl:namestring (uiop:lisp-implementation-directory))))
+  (declare os (Unit -> Keyword))
+  (define (os)
+    "Returns your system's Operating System."
+    (lisp Keyword ()
+      (uiop:detect-os)))
 
- (declare which-configuration-pathnames (Unit -> (List String)))
- (define (which-configuration-pathnames)
-   "Returns a list of configuration pathnames."
-   (lisp (List String) ()
-         (uiop:system-config-pathnames)))
+  (declare hostname (Unit -> String))
+  (define (hostname)
+    "Returns your system's Hostname."
+    (lisp String ()
+      (uiop:hostname)))
 
- (declare which-features (Unit -> (List Keyword)))
- (define (which-features)
-   "Returns a list of active features, from `cl:*features*`."
-   (lisp (list Keyword) ()
-         cl:*features*))
+  (declare implementation (Unit -> Keyword))
+  (define (implementation)
+    "Returns your lisp implementation."
+    (lisp Keyword ()
+      (uiop:implementation-type)))
 
- (declare which-cmd-args (Unit -> (List String)))
- (define (which-cmd-args)
-   "Returns the current command line arguments."
-   (lisp (List String) ()
-         (uiop:command-line-arguments)))
+  (declare lisp-version (Unit -> String))
+  (define (lisp-version)
+    "Returns the version of your lisp implementation."
+    (lisp String ()
+      (uiop:lisp-version-string)))
 
- (declare which-argv0 (Unit -> String))
- (define (which-argv0)
-   "Returns the argv0, first command line argument."
-   (lisp String ()
-         (uiop:argv0))))
+  (declare lisp-impl-directory (Unit -> String))
+  (define (lisp-impl-directory)
+    "Returns your lisp implementation's directory."
+    (lisp String ()
+      (cl:namestring (uiop:lisp-implementation-directory))))
+
+  (declare configuration-pathnames (Unit -> (List String)))
+  (define (configuration-pathnames)
+    "Returns a list of configuration pathnames."
+    (lisp (List String) ()
+      (uiop:system-config-pathnames)))
+
+  (declare features (Unit -> (List Keyword)))
+  (define (features)
+    "Returns a list of active features, from `cl:*features*`."
+    (lisp (list Keyword) ()
+      cl:*features*))
+
+  (declare cmd-args (Unit -> (List String)))
+  (define (cmd-args)
+    "Returns the current command line arguments."
+    (lisp (List String) ()
+      (uiop:command-line-arguments)))
+
+  (declare argv0 (Unit -> String))
+  (define (argv0)
+    "Returns the argv0, first command line argument."
+    (lisp String ()
+      (uiop:argv0))))
 
 #+sb-package-locks
 (sb-ext:lock-package "COALTON-LIBRARY/SYSTEM")

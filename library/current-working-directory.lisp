@@ -13,11 +13,26 @@
    #:pwd
    #:ls
    #:cd
+   #:cd-system
    #:up
    #:down
    #:exists?
+   #:cat
+
+   #:mkdir
+   #:rmdir
    #:files
    #:subdirs
+
+   #:copy
+   #:move-to
+   #:rename
+   #:delete
+   #:write
+   #:read->string
+   #:read->line
+   #:read->lines
+   
    #:with-cwd
    #:with-system-cwd))
 
@@ -40,12 +55,13 @@
 
 (coalton-toplevel
 
-  (declare cwd (Unit -> (State:st file:Pathname Unit)))
+  (declare cwd (Unit -> (State:st file:Pathname file:Pathname)))
   (define (cwd)
-    "Returns the current working directory."
+    "Returns the current working directory as a pathname.."
     (do
      (path <- state:get)
-     (state:put path)))
+     (pure path)
+      ))
   
   (declare cwd-relative-pathname (String -> (State:st file:Pathname Unit)))
   (define (cwd-relative-pathname extension)
@@ -56,7 +72,7 @@
 
   (declare pwd (Unit -> (State:st file:Pathname Unit)))
   (define (pwd)
-    "Prints the current working directory."
+    "Prints the current working directory to standard output."
     (do
      (path <- state:get)
      (state:put path)
@@ -77,7 +93,7 @@
 
   (declare cd-system (String -> (State:st file:Pathname Unit)))
   (define (cd-system system-name)
-    "Changes the directory to a given asdf system"
+    "Changes the directory to a given asdf system."
     (cd (file:system-relative-pathname system-name "")))
 
   (declare up (Unit -> (State:st file:Pathname Unit)))
@@ -96,7 +112,7 @@
 
   (declare exists? (String -> (State:st file:Pathname Boolean)))
   (define (exists? filename)
-    "Checks whether a file or directory exists within the current working directory. "
+    "Checks whether a file or directory exists within the current working directory."
     (do
      (path <- state:get)
      (pure (let ((ex (file:exists? (file:merge path (into filename)))))
@@ -118,17 +134,17 @@
 
   (declare mkdir (String -> (state:ST file:Pathname Unit)))
   (define (mkdir dirname)
-    "Makes a subdirectory in the current working directory."
+    "Makes a subdirectory in the current working directory. Make sure to use a trailing '\\'"
     (do
      (path <- state:get)
-     (pure (file:create-directory (file:merge path (into dirname))))))
+     (pure (file:create-directory (file:merge (into dirname) path)))))
 
   (declare rmdir (String -> (state:ST file:Pathname Unit)))
   (define (rmdir dirname)
-    "Removes a subdirectory from the current working directory."
+    "Removes a subdirectory from the current working directory. Make sure to use a trailing `\\`"
     (do
      (path <- state:get)
-     (pure (file:delete-directory (file:merge path (into dirname))))))
+     (pure (file:delete-directory (file:merge (into dirname) path)))))
   
   (declare files (Unit -> (state:ST file:Pathname (List file:Pathname))))
   (define (files)
@@ -176,6 +192,12 @@
            (f2 (file:merge path (into filename2))))
        (pure (progn (file:copy f1 f2)
                     (file:delete f1))))))
+
+  (declare delete (String -> (state:ST file:Pathname Unit)))
+  (define (delete filename)
+    (do
+     (path <- state:get)
+     (pure (file:delete (file:merge path (into filename))))))
   
   (declare write (String -> file:IFExistsOption -> file:IFDoesNotExistOption -> String -> (State:ST file:Pathname Unit)))
   (define (write filename if-exists if-does-not-exist data)
@@ -208,12 +230,12 @@
 
 (coalton-toplevel
 
-  (declare with-cwd (file:Pathname -> (State:st file:Pathname :a) -> (Tuple file:Pathname :a)))
+  (declare with-cwd (file:Pathname -> (State:st file:Pathname :a) -> :a))
   (define (with-cwd cwd body)
     "Executes a body of functions in a given working directory"
-    (state:run body cwd))
+    (snd (state:run body cwd)))
 
-  (declare with-system-cwd (String -> (State:st file:Pathname :a) -> (Tuple file:Pathname :a)))
+  (declare with-system-cwd (String -> (State:st file:Pathname :a) -> :a))
   (define (with-system-cwd system body)
     "Executes a body of functions within an asdf system directory."
     (with-cwd (file:system-relative-pathname system "") body)))
@@ -222,9 +244,6 @@
 ;;  A simple test case
 ;;
 
-;; get path, set path , etc
-
-;; look into haskell io monad
 (coalton-toplevel
 
   (define (test1)
@@ -250,10 +269,12 @@
     (with-system-cwd "coalton"
       (do
        (down "examples/small-coalton-programs/src/")
-        (cwd)
-        (write "example-file.txt~" file:Supersede file:Create "Wow this works")
+        (pwd)
+        (write "example-file.txt~" file:SupersedeFile file:CreateFile "Wow this works")
         (cat "example-file.txt~")
-        (write "example-file.txt~" file:Supersede file:Create "Wow this *still* works")
+        (write "example-file.txt~" file:SupersedeFile file:CreateFile "Wow this *still* works")
+        (cat "example-file.txt~")
+        (write "example-file.txt~" file:AppendFile file:CreateFile "This also works")
         (cat "example-file.txt~")))))
 
 #+sb-package-locks

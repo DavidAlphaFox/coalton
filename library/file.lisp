@@ -30,17 +30,19 @@
    #:file->lines
    #:cat
 
-   
    #:DirectionOption
-   #:Input
-   #:Output
+   #:InputFile
+   #:OutputFile
    #:IfExistsOption
    #:ExistsError
-   #:Append
-   #:Supersede
+   #:AppendFile
+   #:SupersedeFile
    #:IfDoesNotExistOption
    #:DoesNotExistError
-   #:Create
+   #:CreateFile
+   #:match-direction-option
+   #:match-if-exists-option
+   #:match-if-does-not-exist-option
    
    #:FileStream
    
@@ -217,42 +219,41 @@
 
   (repr :enum)
   (Define-type DirectionOption
-    Input
-    Output)
+    InputFile
+    OutputFile)
   
   (repr :enum)
   (define-type IfExistsOption
     ExistsError
-    Append
-    Supersede)
+    AppendFile
+    SupersedeFile)
 
   (repr :enum)
   (define-type IfDoesNotExistOption
     DoesNotExistError
-    Create))
+    CreateFile))
+
+(cl:defvar *direction-options*
+  '((DirectionOption/InputFile :input)
+    (DirectionOption/OutputFile :output)))
+
+(cl:defun match-direction-option (x)
+  (cl:second (cl:assoc x *direction-options*)))
 
 (cl:defvar *if-exists-options*
   '((IfExistsOption/ExistsError :error)
-    (IfExistsOption/Append :append)
-    (IfExistsOption/Supersede :supersede)))
+    (IfExistsOption/AppendFile :append)
+    (IfExistsOption/SupersedeFile :supersede)))
 
 (cl:defun match-if-exists-option (x)
   (cl:second (cl:assoc x *if-exists-options*)))
 
 (cl:defvar *if-does-not-exist-options*
   '((IfDoesNotExistOption/DoesNotExistError :error)
-    (IfDoesNotExistOption/Create :create)))
+    (IfDoesNotExistOption/CreateFile :create)))
 
 (cl:defun match-if-does-not-exist-option (x)
   (cl:second (cl:assoc x *if-does-not-exist-options*)))
-
-(cl:defvar *direction-options*
-  '((DirectionOption/Input :input)
-    (DirectionOption/Output :output)))
-
-(cl:defun match-direction-option (x)
-  (cl:second (cl:assoc x *direction-options*)))
-
 
 ;;;
 ;;; File streams
@@ -281,10 +282,19 @@
     (lisp String (data stream)
       (cl:write-sequence data stream)))
 
-  (declare write-byte (Integer -> FileStream -> Integer))
+  (declare write-byte (Ufix -> FileStream -> Unit))
   (define (write-byte x stream)
-    (lisp Integer (x stream)
-      (cl:write-byte x stream)))
+    "Writes a single byte to a stream."
+    (lisp UFix (x stream)
+      (cl:write-byte x stream))
+    Unit)
+  
+  (declare write-char (Char -> FileStream -> Unit))
+  (define (write-char c stream)
+    "Writes a single character to a stream."
+    (lisp Char (c stream)
+      (cl:write-char c stream))
+    Unit)
   
   (declare read (FileStream -> String))
   (define (read stream)
@@ -323,7 +333,8 @@
 
   ;; just coalton
   (define (write-to-file filename if-exists if-does-not-exist data)
-    (let ((Stream (open filename Output if-exists if-does-not-exist)))
+    "Writes data to a given file, with if-exists options `ExistsError` `Append` and `Supersede`, and if-does-not-exist options `DoesNotExistError` and `Create`."
+    (let ((Stream (open filename OutputFile if-exists if-does-not-exist)))
       (write data stream)
       (close stream))
     (traceobject "Data written to" filename)))

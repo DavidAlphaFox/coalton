@@ -223,10 +223,40 @@
    #:Iterator)
 
   (:import-from
-   #:coalton-library/system
-   #:time)
+   #:coalton-library/file
+   #:Pathname
+   #:DirectionOption
+   #:InputFile
+   #:OutputFile
+   #:IfExistsOption
+   #:ExistsError
+   #:AppendFile
+   #:SupersedeFile
+   #:IfDoesNotExistOption
+   #:DoesNotExistError
+   #:CreateFile)
   (:export
-   #:time))
+   #:Pathname
+   #:DirectionOption
+   #:InputFile
+   #:OutputFile
+   #:IfExistsOption
+   #:ExistsError
+   #:AppendFile
+   #:SupersedeFile
+   #:IfDoesNotExistOption
+   #:DoesNotExistError
+   #:CreateFile)
+
+  
+  
+  (:import-from
+   #:coalton-library/system
+   #:time
+   #:Keyword)
+  (:export
+   #:time
+   #:Keyword))
 
 #+sb-package-locks
 (sb-ext:lock-package "COALTON-PRELUDE")
@@ -257,5 +287,6 @@
    (#:st #:coalton-library/monad/state)
    (#:iter #:coalton-library/iterator)
    (#:sys #:coalton-library/system)
-   (#:file #:coalton-library/file)))
+   (#:file #:coalton-library/file)
+   (#:cwd #:coalton-library/current-working-directory)))
 
