@@ -8,8 +8,12 @@
    #:time
    #:sleep)
   (:export
-   #:Keyword
-   #:string->keyword
+   #:SysError
+
+   #:getenv
+   #:setenv
+   #:defenv
+   
    #:architecture
    #:os
    #:hostname
@@ -18,6 +22,7 @@
    #:lisp-impl-directory
    #:configuration-pathnames
    #:features
+   #:add-feature
    #:cmd-args
    #:argv0))
 
@@ -59,89 +64,131 @@ While the result will always contain microseconds, some implementations may retu
       Unit)))
 
 ;;;
-;;; Keywords
-;;;
-
-(coalton-toplevel
-
-  (repr :native cl:keyword)
-  (define-type Keyword
-    "A Keyword represented by a Common Lisp keyword.")
-
-  (declare string->keyword (String -> Keyword))
-  (define (string->keyword s)
-    (lisp Keyword (s)
-      (cl:intern (cl:STRING-UPCASE s) 'cl:keyword)))
-
-  (define-instance (Into String Keyword)
-    (define (into s)
-      (string->keyword s))))
-;;;
 ;;; Gathering System information
 ;;;
 
-
 (coalton-toplevel
 
-  (declare architecture (Unit -> Keyword))
-  (define (architecture)
-    "Returns your system's architecture."
-    (lisp Keyword ()
-      (uiop:architecture)))
+  (define-type SysError
+    (SysError String))
 
-  (declare os (Unit -> Keyword))
-  (define (os)
-    "Returns your system's Operating System."
-    (lisp Keyword ()
-      (uiop:detect-os)))
+  ;;
+  ;; Accessing Environment Variables
+  ;;
+  
+  (declare getenv (String -> (Result SysError String)))
+  (define (getenv var)
+    "Gets the value of the environmental variable `var`, errors if `var` doesn't exist."
+    (lisp (Result SysError String) (var)
+               (cl:let ((env (uiop:getenvp var)))
+                 (cl:if env
+                        (Ok env)
+                        (Err (SysError "Environment variable not found."))))))
+
+  
+  (declare setenv (String -> String -> (Result SysError Unit)))
+  (define (setenv var val)
+    "Sets an environment variable `var` to string `val`, only if `var` already exists."
+    (match (getenv var)
+      ((Err x)
+       (Err x))
+      ((Ok _)
+       (lisp Integer (var val)
+           (cl:setf (uiop:getenv var) val))
+       (Ok Unit))))
+
+  (declare defenv (String -> String -> (Result SysError Unit)))
+  (define (defenv var val)
+    "Defines a new environmental variable `var`, sets it to `val`."
+    (match (getenv var)
+      ((Err _)
+       (lisp Integer (var val)
+           (cl:setf (uiop:getenv var) val))
+       (Ok Unit))
+      ((Ok _)
+       (Err (SysError "Environment variable already exists.")))))
+
+  ;;
+  ;; Typical Environment/System variables
+  ;;
+  
+  (declare architecture (String))
+  (define architecture
+    "The system's architecture (stored at compile time)."
+    (lisp String ()
+      (cl:string (uiop:architecture))))
+
+  (declare os (String))
+  (define os
+    "The system's operating system (stored at compile time)."
+    (lisp String ()
+      (cl:string (uiop:detect-os))))
 
   (declare hostname (Unit -> String))
   (define (hostname)
-    "Returns your system's Hostname."
+    "Returns the system's hostname. This is a function because the hostname can be redefined."
     (lisp String ()
       (uiop:hostname)))
 
-  (declare implementation (Unit -> Keyword))
-  (define (implementation)
-    "Returns your lisp implementation."
-    (lisp Keyword ()
-      (uiop:implementation-type)))
+  (declare implementation (String))
+  (define implementation
+    "The lisp implementation (stored at compile time)."
+    (lisp String ()
+      (cl:string (uiop:implementation-type))))
 
-  (declare lisp-version (Unit -> String))
-  (define (lisp-version)
-    "Returns the version of your lisp implementation."
+  (declare lisp-version (String))
+  (define lisp-version
+    "The lisp implementation version (stored at compile time)."
     (lisp String ()
       (uiop:lisp-version-string)))
 
-  (declare lisp-impl-directory (Unit -> String))
-  (define (lisp-impl-directory)
-    "Returns your lisp implementation's directory."
+  (declare lisp-impl-directory (String))
+  (define lisp-impl-directory
+    "The lisp implementation's directory (stored at compile time)."
     (lisp String ()
       (cl:namestring (uiop:lisp-implementation-directory))))
 
   (declare configuration-pathnames (Unit -> (List String)))
   (define (configuration-pathnames)
-    "Returns a list of configuration pathnames."
+    "Returns the list of directories which store default user configuration."
     (lisp (List String) ()
       (uiop:system-config-pathnames)))
 
-  (declare features (Unit -> (List Keyword)))
+  (declare features (Unit -> (List String)))
   (define (features)
     "Returns a list of active features, from `cl:*features*`."
-    (lisp (list Keyword) ()
-      cl:*features*))
+    (lisp (list String) ()
+      (cl:mapcar #'cl:string cl:*features*)))
 
-  (declare cmd-args (Unit -> (List String)))
-  (define (cmd-args)
-    "Returns the current command line arguments."
-    (lisp (List String) ()
-      (uiop:command-line-arguments)))
+  (declare add-feature (String -> Unit))
+  (define (add-feature feat)
+    "Adds a feature `feat` to `cl:*features*`."
+    (lisp Boolean (feat)
+      (cl:push (cl:intern feat "KEYWORD")
+               cl:*features*)
+      cl:t)
+    Unit)
 
-  (declare argv0 (Unit -> String))
-  (define (argv0)
-    "Returns the argv0, first command line argument."
-    (lisp String ()
-      (uiop:argv0))))
+  ;;
+  ;; Command line arguments
+  ;;
+  
+  (declare cmd-args ((Result SysError (List String))))
+  (define cmd-args
+    "The current command line arguments (stored at compile time)."
+    (lisp (Result SysError (List String)) ()
+      (cl:let ((cla (uiop:command-line-arguments)))
+        (cl:if (cl:null cla)
+               (Err (SysError "No command line arguments found."))
+               (Ok cla)))))
+
+  (declare argv0 ((Result SysError String)))
+  (define argv0
+    "The first command line argument (stored at compile time)."
+    (lisp (Result SysError String) ()
+        (cl:if (uiop:argv0)
+               (Ok (uiop:argv0))
+               (Err (SysError "Argv0 not found."))))))
 
 #+sb-package-locks
 (sb-ext:lock-package "COALTON-LIBRARY/SYSTEM")
