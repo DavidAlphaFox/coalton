@@ -106,7 +106,28 @@
     (FileError String String)
     (ASDFError String String)
     (ReadError String String)
-    (WriteError String String)))
+    (WriteError String String))
+
+  (define-instance (Signal FileError)
+    (define (error ferr)
+      (match ferr
+        ((PathError str path)
+         (error (lisp String (str path)
+                  (cl:format cl:nil "Path Error: ~%~%~a ~a" str path))))
+        ((FileError str path)
+         (error (lisp String (str path)
+                  (cl:format cl:nil "File Error: ~%~%~a ~a" str path))))
+        
+        (_ (error "not yet"))))
+    (define (warn ferr)
+      (match ferr
+        ((PathError str path)
+         (warn (lisp String (str path)
+                  (cl:format cl:nil "~%~%~a ~a" str path))))
+        ((FileError str path)
+         (error (lisp String (str path)
+                  (cl:format cl:nil "~%~%~a ~a" str path))))
+        (_ (warn "not yet"))))))
 
 
 ;;;

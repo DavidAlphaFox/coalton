@@ -70,7 +70,20 @@ While the result will always contain microseconds, some implementations may retu
 (coalton-toplevel
 
   (define-type SysError
-    (SysError String))
+    "An error message for system errors."
+    (SysError String String))
+
+  ;;
+  ;; error handling options for System errors
+  ;;
+  
+  (define-instance (Signal SysError)
+    (define (error (SysError msg obj))
+      (error (lisp String (msg obj)
+               (cl:format cl:nil "System Error:~%~%~a ~a" msg obj))))
+    (define (warn (SysError msg obj))
+      (warn (lisp String (msg obj)
+              (cl:format cl:nil "~%Coalton System: ~a ~a" msg obj)))))
 
   ;;
   ;; Accessing Environment Variables
@@ -83,7 +96,7 @@ While the result will always contain microseconds, some implementations may retu
                (cl:let ((env (uiop:getenvp var)))
                  (cl:if env
                         (Ok env)
-                        (Err (SysError "Environment variable not found."))))))
+                        (Err (SysError "Environment variable not found:" var))))))
 
   
   (declare setenv (String -> String -> (Result SysError Unit)))
@@ -106,7 +119,7 @@ While the result will always contain microseconds, some implementations may retu
            (cl:setf (uiop:getenv var) val))
        (Ok Unit))
       ((Ok _)
-       (Err (SysError "Environment variable already exists.")))))
+       (Err (SysError "Environment variable already exists:" var)))))
 
   ;;
   ;; Typical Environment/System variables
@@ -179,7 +192,7 @@ While the result will always contain microseconds, some implementations may retu
     (lisp (Result SysError (List String)) ()
       (cl:let ((cla (uiop:command-line-arguments)))
         (cl:if (cl:null cla)
-               (Err (SysError "No command line arguments found."))
+               (Err (SysError "No command line arguments found." ""))
                (Ok cla)))))
 
   (declare argv0 ((Result SysError String)))
@@ -188,7 +201,7 @@ While the result will always contain microseconds, some implementations may retu
     (lisp (Result SysError String) ()
         (cl:if (uiop:argv0)
                (Ok (uiop:argv0))
-               (Err (SysError "Argv0 not found."))))))
+               (Err (SysError "Argv0 not found." ""))))))
 
 #+sb-package-locks
 (sb-ext:lock-package "COALTON-LIBRARY/SYSTEM")
