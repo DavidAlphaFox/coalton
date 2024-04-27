@@ -265,20 +265,27 @@
 
  (define-instance (Iso :a :a))
 
- (define-class (Signal :a)
-   "Signal an error by calling `CL:ERROR` or signal a warning by calling `CL:WARN`."
-   (error (:a -> :b))
-   (warn  (:a -> :b)))
+  ;;
+  ;; Signal type- errors and warnings
+  ;;
+  
+  (define-class (Signal :a)
+    "Signal an error by calling `CL:ERROR` or signal a warning by calling `CL:WARN`."
+    (error (:a -> :b))
+    (warn  (:a -> Unit)))
 
  (define-instance (Signal String)
    (define (error str)
-     (lisp :a (str) (cl:error str)))
+     (lisp :a (str)
+       (cl:error str)))
    (define (warn str)
-     (lisp :a (str) (cl:warn str))))
+     (lisp Unit (str)
+       (cl:format cl:*error-output* "COALTON WARNING: ~A~%" str)
+       Unit)))
 
- ;;
- ;; Unwrappable for fallible unboxing
- ;;
+  ;;
+  ;; Unwrappable for fallible unboxing
+  ;;
   
   (define-class (Unwrappable :container)
     "Containers which can be unwrapped to get access to their contents.
@@ -319,10 +326,10 @@ Typical `fail` continuations are:
                                                   container))))
                    container))
 
- (declare with-default ((Unwrappable :container) =>
-                                                 :element
-                                                 -> (:container :element)
-                                                 -> :element))
+  (declare with-default ((Unwrappable :container) =>
+                         :element
+                         -> (:container :element)
+                         -> :element))
  (define (with-default default container)
    "Unwrap `container`, returning `default` on failure."
    (unwrap-or-else (fn (elt) elt)
