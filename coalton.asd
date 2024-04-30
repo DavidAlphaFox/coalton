@@ -182,7 +182,7 @@
                (:file "monad/free")
                (:file "seq")
                (:file "system")
-               ;(:file "file")
+               (:file "file")
                ;(:file "current-working-directory")
                (:file "prelude")))
 

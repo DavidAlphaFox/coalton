@@ -11,8 +11,10 @@
    (#:list #:coalton-library/list)
    (#:vec #:coalton-library/vector)
    (#:res #:coalton-library/result)
-   (#:types #:coalton-library/types))
+   (#:types #:coalton-library/types)
+   (#:str #:coalton-library/string))
   (:export
+   
    #:Pathname
    #:Merge
 
@@ -38,8 +40,8 @@
    #:delete
    #:read-file-string
    #:read-file-lines
-   #:cat
 
+   #:FStream
    #:FileStream
    #:InputStream
    #:OutputStream
@@ -59,27 +61,26 @@
    #:DNEError
    #:Create
 
-   #:ElementType
-   #:Int
-   #:SFix
-   #:S64
-   #:S32
-   #:S16
-   #:S8
-   #:USFix
-   #:US64
-   #:US32
-   #:US16
-   #:US8
-   #:Character
-
    #:StreamOptions
    #:Input
    #:Output
    #:TwoWay
    #:Broadcast
 
-   #:open))
+   #:Streamable
+   #:open
+   #:close
+   #:read
+   #:read-sequence
+   #:write
+   #:write-sequence
+   
+   #:read-char
+   #:read-byte
+   #:write-char
+   #:write-byte
+   #:write-string
+))
 
 (in-package #:coalton-library/file)
 
@@ -99,16 +100,18 @@
   (define-type Pathname
     "Pathname object. Uses `cl:pathname`")
 
+  ;; will be deprecated, but right now this is the only way to conveniently use pathnames
   (define-instance (Into String Pathname)
     (define (into s)
       (lisp Pathname (s)
         (cl:pathname s))))
-  #+ig(define-instance (TryInto String Pathname)
+  
+  (define-instance (TryInto String Pathname)
         (define (tryinto s)
           (lisp (Result String Pathname) (s)
-            (cl:if (cl:pathname s)
-                   (Ok (cl:pathname s))
-                   (Err "Invalid pathname string.")))))
+            (cl:handler-case (Ok (cl:pathname s))
+              (cl:error ()                
+                (Err "Invalid pathname string."))))))
 
   (define-instance (Into Pathname String)
     (define (into p)
@@ -127,6 +130,7 @@
 
 (coalton-toplevel
 
+  ;; TODO finalize FileError types, error/warning messages
   (define-type FileError
     (PathError String Pathname)
     (FileError String String)
@@ -313,6 +317,7 @@
 
 (coalton-toplevel
 
+  ;; probably remove
   (declare copy (Pathname -> Pathname -> (Result FileError (Result FileError Unit))))
   (define (copy input output)
     "Copies a file to a target file."
@@ -343,12 +348,7 @@
     "Reads a file into lines."
     (lisp (Result FileError (List String)) (path)
       (cl:handler-case (Ok (uiop:read-file-lines path))
-        (cl:error () (Err (PathError "File does not exist." path))))))
-
-  (declare cat (Pathname -> Unit))
-  (define (cat path)
-    "Traces the contents of a given file to the repl."
-    (traceobject "File Contents" (read-file-string path))))
+        (cl:error () (Err (PathError "File does not exist." path)))))))
 
 ;;;
 ;;; FileStreams, options, and opening
@@ -357,10 +357,11 @@
 (coalton-toplevel
 
   (repr :native cl:file-stream)
-  (define-type FStream)
+  (define-type FStream
+    "Represents a lisp file-stream, not intended to be accessed directly.")
 
   (define-type (FileStream :a)
-    "Represents a lisp file-stream or collection of file-streams with element-type `:a`."
+    "Contains an `FStream` or multiple `FStreams` with element-type `:a`."
     (InputStream FStream)
     (OutputStream FStream)
     (TwoWayStream FStream Fstream)
@@ -388,6 +389,7 @@
     Create)
   
   (define-type StreamOptions
+    "A type for providing parameters for opening streams."
     (Input Pathname)
     (Output Pathname IfExists IfDoesNotExist)
     (TwoWay Pathname IfExists IfDoesNotExist)
@@ -399,6 +401,7 @@
   
   (declare %open-input (Pathname -> types:lisptype -> (Result FileError FStream)))
   (define (%open-input path etype)
+    "Opens an input stream for the given filepath, and for a given type."
     (lisp (Result FileError FStream) (path etype)
       (cl:handler-case (Ok (cl:open path
                                     :direction :input
@@ -408,6 +411,7 @@
 
   (declare %open-output (Pathname -> IfExists -> IfDoesNotExist -> types:lisptype -> (Result FileError FStream)))
   (define (%open-output path if-exists if-does-not-exist etype)
+    "Opens an output stream for the given filepath, and for a given type."
     (lisp (Result FileError FStream) (path if-exists if-does-not-exist etype)
       (cl:handler-case (Ok (cl:open path
                                     :direction :output
@@ -427,6 +431,7 @@
 
   (declare %open-twoway (Pathname -> IFExists -> IfDoesNotExist -> types:lisptype -> (Result FileError (FileStream :a))))
   (define (%open-twoway path if-exists if-does-not-exist etype)
+    "Opens an two way stream for the given filepath, and for a given type."
     (match (Tuple (%open-input path etype) (%open-output path if-exists if-does-not-exist etype))
       ((Tuple (Ok a) (Ok b))
        (Ok (TwoWayStream a b)))
@@ -439,6 +444,7 @@
 
   (declare %open-broadcast ((List Pathname) -> IfExists -> IfDoesNotExist -> types:lisptype -> (Result FileError (FileStream :a))))
   (define (%open-broadcast paths if-exists if-does-not-exist etype)
+    "Opens a broadcast stream for a list of filepaths. These are all output streams."
     (let ((streams (map (fn (p)
                           (%open-output p if-exists if-does-not-exist etype))
                         paths))
@@ -455,6 +461,7 @@
 
   (declare %open (StreamOptions -> types:lisptype -> (Result FileError (FileStream :a))))
   (define (%open stream-options etype)
+    "Opens a FileStream for a given type and StreamOptions."
     (match stream-options
       ((Input path)
        (match (%open-input path etype)
@@ -477,14 +484,18 @@
   ;;
   ;;
 
-  (declare %close-fstream ((FStream -> (Result FileError :a))))
+  (declare %close-fstream ((FStream -> (Result FileError Unit))))
   (define (%close-fstream fs)
-    (lisp (Result FileError :a) (fs) 
-      (cl:handler-case (Ok (cl:close fs))
+    "Closes an FStream."
+    (lisp (Result FileError Unit) (fs) 
+      (cl:handler-case (Ok (cl:progn
+                             (cl:close fs)
+                             Unit))
         (cl:error () (Err (StreamError "Issue closing stream."))))))
   
   (declare %close ((Result FileError (FileStream :a)) -> (Result FileError Unit)))
   (define (%close fs)
+    "Closes a Filestream, if it's open."
     (match fs
       ((Err _r)
        (Err (StreamError "Stream can't be closed, already not open.")))
@@ -506,14 +517,16 @@
   ;;
   
   (declare %read-char-from-stream (FStream -> (Result FileError Char)))
-  (define (%read-char-from-stream fus)
-    (lisp (Result FileError Char) (fus)
-      (cl:handler-case (Ok (cl:read-char fus))
+  (define (%read-char-from-stream fs)
+    "Reads a character from an FStream."
+    (lisp (Result FileError Char) (fs)
+      (cl:handler-case (Ok (cl:read-char fs))
         (cl:end-of-file () (Err (EOF)))
-        (cl:error () (Err (ReadError "Non-EOF error reading from stream" fus))))))
+        (cl:error () (Err (ReadError "Non-EOF error reading from stream" fs))))))
   
-  (declare %read-char ((Result FileError (FileStream Char)) -> (Result FileError Char)))
-  (define (%read-char fs)
+  (declare read-char ((Result FileError (FileStream Char)) -> (Result FileError Char)))
+  (define (read-char fs)
+    "Reads a character from a character FileStream."
     (match fs
       ((Ok stream)
        (match stream
@@ -526,14 +539,14 @@
        (Err r))))
 
   (declare %read-byte-from-stream (FStream -> (Result FileError :a)))
-  (define (%read-byte-from-stream fus)
-    (lisp (Result FileError :a) (fus)
-      (cl:handler-case (Ok (cl:read-byte fus))
+  (define (%read-byte-from-stream fs)
+    (lisp (Result FileError :a) (fs)
+      (cl:handler-case (Ok (cl:read-byte fs))
         (cl:end-of-file () (Err (EOF)))
-        (cl:error () (Err (ReadError "Non-EOF error reading from stream" fus))))))
+        (cl:error () (Err (ReadError "Non-EOF error reading from stream" fs))))))
   
-  (declare %read-byte ((Result FileError (FileStream :a)) -> (Result FileError :a)))
-  (define (%read-byte fs)
+  (declare read-byte ((Result FileError (FileStream :a)) -> (Result FileError :a)))
+  (define (read-byte fs)
     (match fs
       ((Ok stream)
        (match stream
@@ -545,42 +558,61 @@
       ((Err r)
        (Err r))))
 
+  (declare %read-sequence ((Streamable :a) => (Result FileError (FileStream :a)) -> (Result FileError (iter:Iterator :a))))
+  (define (%read-sequence fs)
+    (let ((sequence (cell:new Nil))
+          (fread (fn ()
+                   (match (read fs)
+                     ((Err (EOF))
+                      (Ok (iter:into-iter (list:reverse (cell:read sequence)))))
+                     ((Err r)
+                      (Err r))
+                     ((Ok elt)
+                      (cell:push! sequence elt)
+                      (fread))))))
+      (fread)))
+
   ;;
   ;; Wrte
   ;;
   
-  (declare %write-char-to-stream (FStream -> :a -> (Result FileError :b)))
+  (declare %write-char-to-stream (FStream -> :a -> (Result FileError Unit)))
   (define (%write-char-to-stream fs data)
-    (lisp (Result FileError :a) (fs data)
-      (cl:handler-case (Ok (cl:write-char data fs))
+    (lisp (Result FileError Unit) (fs data)
+      (cl:handler-case (Ok (cl:progn
+                             (cl:write-char data fs)
+                             Unit))
+        (Cl:Nil () (Err (WriteError "Invalid Write Operation" "")))
         (cl:error () (Err (WriteError "Invalid Write Operation." ""))))))
   
-  (declare %write-char ((Result FileError (FileStream :a)) -> :a -> (Result FileError Unit)))
-  (define (%write-char fs data)
+  (declare write-char ((Result FileError (FileStream :a)) -> :a -> (Result FileError Unit)))
+  (define (write-char fs data)
     (match fs
-      ((Ok s)
-       (match s
-         ((OutputStream stream)
-          (%write-char-to-stream stream data))
-         ((TwoWayStream _in out)
-          (%write-char-to-stream out data))
-         ((BroadcastStream streams)
-          (for s in streams
-               (%write-char-to-stream s data))
-          (Ok Unit))
-         ((InputStream _)
-          (Err (WriteError "Invalid write operation:" "Target stream is Input only.")))))
-      ((Err r)
-       (Err r))))
+         ((Ok s)
+          (match s
+            ((OutputStream stream)
+             (%write-char-to-stream stream data))
+            ((TwoWayStream _in out)
+             (%write-char-to-stream out data))
+            ((BroadcastStream streams)
+             (for s in streams
+                  (%write-char-to-stream s data))
+             (Ok Unit))
+            ((InputStream _)
+             (Err (WriteError "Invalid write operation:" "Target stream is Input only.")))))
+         ((Err r)
+          (Err r))))
 
-  (declare %write-byte-to-stream (FStream -> :a -> (Result FileError :b)))
+  (declare %write-byte-to-stream (FStream -> :a -> (Result FileError Unit)))
   (define (%write-byte-to-stream fs data)
-    (lisp (Result FileError :a) (fs data)
-      (cl:handler-case (Ok (cl:write-byte data fs))
+    (lisp (Result FileError Unit) (fs data)
+      (cl:handler-case (Ok (cl:progn
+                             (cl:write-byte data fs)
+                             Unit))
         (cl:error () (Err (WriteError "Invalid Write Operation." ""))))))
   
-  (declare %write-byte ((Result FileError (FileStream :a)) -> :a -> (Result FileError Unit)))
-  (define (%write-byte fs data)
+  (declare write-byte ((Result FileError (FileStream :a)) -> :a -> (Result FileError Unit)))
+  (define (write-byte fs data)
     (match fs
       ((Ok s)
        (match s
@@ -597,19 +629,28 @@
       ((Err r)
        (Err r))))
 
+  (declare %write-sequence (Streamable :a => (Result FileError (FileStream :a)) -> (iter:Iterator :a) -> (Result FileError Unit)))
+  (define (%write-sequence fs sequence)
+    (Ok (for element in sequence
+             (match (write fs element)
+               ((Err r)
+                (Return (Err r)))
+               ((Ok _a)
+                Unit)))))
+
+  ;;
+  ;; Streamable class
+  ;;
   
   (define-class (Streamable :a)
     "A class of types which are able to be written to or read from a file."
     (open (StreamOptions -> (Result FileError (Filestream :a))))
     (close ((Result FileError (FileStream :a)) -> (Result FileError Unit)))
     (read ((Result FileError (FileStream :a)) -> (Result FileError :a)))
-    ;; (read-sequence)
+    (read-sequence ((Result FileError (FileStream :a)) -> (Result FileError (iter:Iterator :a))))
     (write ((Result FileError (FileStream :a)) -> :a -> (Result FileError Unit)))
-    ;; (write-sequence ((Iterable :b) (FileStream :a) -> (:b :a) -> (Result FileError Unit)))
-    )
-
-  ;; proxy of-
-
+    (write-sequence ((Result FileError (FileStream :a)) -> (iter:Iterator :a) -> (Result FileError Unit))))
+  
   (define-instance (Streamable Char)
     (define (open stream-options)
       (let ((Type (types:runtime-repr (the (types:Proxy Char) types:Proxy))))
@@ -617,26 +658,84 @@
     (define (close fs)
       (%close fs))
     (define (read fs)
-      (%read-char fs))
+      (read-char fs))
+    (define (read-sequence fs)
+      (%read-sequence fs))
     (define (write fs data)
-      (%write-char fs data)))
+      (write-char fs data))
+    (define (write-sequence fs sequence)
+      (%write-sequence fs sequence))))
 
-  (define-instance (Streamable U64)
-    (define (open stream-options)
-      (let ((type (types:runtime-repr (the (types:Proxy U64) types:Proxy))))
-        (%open stream-options type)))
-    (define (close fs)
-      (%close fs))
-    (define (read fs)
-      (%read-byte fs))
-    (define (write fs data)
-      (%write-byte fs data)))
+;;;
+;;; Streamable definitions for Integer types
+;;;
 
+(cl:eval-when (:compile-toplevel :load-toplevel)
+  (cl:defmacro define-streamable (type)
+    `(define-instance (Streamable ,type)
+       (define (open stream-options)
+         (let ((t (types:runtime-repr (the (types:Proxy ,type) types:Proxy))))
+           (%open stream-options t)))
+       (define (close fs)
+         (%close fs))
+       (define (read fs)
+         (read-byte fs))
+       (define (read-sequence fs)
+         (%read-sequence fs))
+       (define (write fs data)
+         (write-byte fs data))
+       (define (write-sequence fs sequence)
+         (%write-sequence fs sequence)))))
+
+(coalton-toplevel
+  (define-streamable IFix)
+  (define-streamable UFix)
+  (define-streamable I8)
+  (define-streamable U8)
+  (define-streamable I16)
+  (define-streamable U16)
+  (define-streamable I32)
+  (define-streamable U32)
+  (define-streamable I64)
+  (define-streamable U64))
+
+;;;
+;;; Broader input/output functions.
+;;;
+
+(coalton-toplevel
+
+  (declare write-string ((Result FileError (FileStream Char)) -> String -> (Result FileError Unit)))
+  (define (write-string fs s)
+    "Writes a `string` to a FileStream."
+    (write-sequence fs (str:chars s)))
+
+;;;
+;;; Probably throwaway test functions
+;;;
+  
   (declare test-open-read-close (Unit -> (Result FileError Unit)))
   (define (test-open-read-close)
     (let ((stream (open (Input (into "test.py")))))
-      (traceobject "Character read:" (the (Result FileError Char) (read stream)))
+      (traceobject "Character read:" (the (Result FileError I8) (read stream)))
       (close stream)))
+
+  (declare test-open-read-sequence-close (Unit -> (List Char)))
+  (define (test-open-read-sequence-close)
+    (let ((stream (the (Result FileError (FileStream Char))
+                       (open (Input (into "test.py")))))
+          (chrs (read-sequence stream)))
+      (close stream)
+      (iter:collect! (unwrap chrs))))
+
+  (declare test-open-write-sequence-close (Unit -> (List Char)))
+  (define (test-open-write-sequence-close)
+    (let ((stream (the (Result FileError (FileStream Char))
+                       (open (Output (into "test.py") Append Create)))))
+      (write-sequence stream (str:chars "wow cool"))
+      (close stream)
+      (test-open-read-sequence-close)))
+
 
   (declare read-whole-file (Unit -> (Result FileError Unit)))
   (define (read-whole-file)
@@ -649,27 +748,15 @@
                      ((Err _r)
                       Unit)))))
       (fread)
-      (close stream))) ;; file error :a
+      (close stream))))
 
-  ;; look at iter:collect!
-  
-
-
-
-  #+ignore  (define-instance (Streamable I64)
-              (define (open stream-options)
-                (let ((type (types:runtime-repr (the (types:Proxy I64) types:Proxy))))
-                  (%open stream-options type)))
-              (define (read fs)
-                (%read fs)))
-
-  
-
-  
+#+ig
+(coalton-toplevel
   #+ignore(define-instance (Streamable Integer)
             (define (open stream-options)
               (the (Proxy Integer)
-                   (types:runtime-repr proxy-inner)) (let p = types:Proxy)
+                   (types:runtime-repr proxy-inner))
+              (let p = types:Proxy)
               (let p_ = (types:proxy-inner p))
               (let type = (types:runtime-repr p_))
               (type:as-proxy-of
@@ -677,295 +764,7 @@
               ;; (the (proxy Integer))
               (let ((type ())
                     )
-                (match ))))
-
-  
-  )
-
-#+ignore
-(coalton-toplevel
-
-  (repr :native cl:file-stream)
-  (define-type FStream)
-
-  (define-type (FileStream :a)
-    "Represents a lisp file-stream or collection of file-streams."
-    (InputStream FStream)
-    (OutputStream FStream)
-    (TwoWayStream FStream FStream)
-    (BroadcastStream (List FStream)))
-
-  ;;
-  ;; Stream Options
-  ;;
-  
-  (repr :enum)
-  (define-type IfExists
-    "Possible options for opening a stream when the file exists."
-    ExistsError
-    NewVersion
-    Rename
-    RenameAndDelete
-    Overwrite
-    Append
-    Supersede)
-
-  (repr :enum)
-  (define-type IfDoesNotExist
-    "Possible options for opening a stream when the file does not exist."
-    DNExistError
-    Create)
-
-                                        ;(repr :enum)
-  #+ignore(define-type ElementType
-            Int
-            SFix
-            S64
-            S32
-            S16
-            S8
-            USFix
-            US64
-            US32
-            US16
-            US8
-            Character)
-  
-  (define-type StreamOptions
-    (Input Pathname ElementType)
-    (Output Pathname IfExists IfDoesNotExist ElementType)
-    (TwoWay Pathname IfExists IfDoesNotExist)
-    (Broadcast (list Pathname) IfExists IfDoesNotExist))
-
-  ;;
-  ;;
-  ;;
-  
-  (declare %open-input (Pathname -> ElementType -> (Result FileError FStream)))
-  (define (%open-input path etype)
-    (lisp (Result FileError FStream) (path etype)
-      (cl:handler-case (Ok (cl:open path
-                                    :direction :input
-                                    :element-type (cl:case etype
-                                                    (ElementType/Int       'cl:integer)
-                                                    (ElementType/SFix      'cl:fixnum)
-                                                    (ElementType/S64       '(cl:signed-byte 64))
-                                                    (ElementType/S32       '(cl:signed-byte 32))
-                                                    (ElementType/S16       '(cl:signed-byte 16))
-                                                    (ElementType/S8        '(cl:signed-byte 8))
-                                                    (ElementType/USFix     '(cl:and cl:fixnum cl:unsigned-byte))
-                                                    (ElementType/US64      '(cl:unsigned-byte 64))
-                                                    (ElementType/US32      '(cl:unsigned-byte 32))
-                                                    (ElementType/US16      '(cl:unsigned-byte 16))
-                                                    (ElementType/US8       '(cl:unsigned-byte 8))
-                                                    (ElementType/Character 'cl:character))))
-        (cl:error () (Err (PathError "Error opening input stream with path." path))))))
-
-  
-
-  (declare %open-output (Pathname -> IfExists -> IfDoesNotExist -> ElementType -> (Result FileError FStream)))
-  (define (%open-output path if-exists if-does-not-exist etype)
-    (lisp (Result FileError FStream) (path if-exists if-does-not-exist etype)
-      (cl:handler-case (Ok (cl:open path
-                                    :direction :output
-                                    :element-type (cl:case etype
-                                                    (ElementType/Int      'cl:integer)
-                                                    (ElementType/SFix     'cl:fixnum)
-                                                    (ElementType/S64      '(cl:signed-byte 64))
-                                                    (ElementType/S32      '(cl:signed-byte 32))
-                                                    (ElementType/S16      '(cl:signed-byte 16))
-                                                    (ElementType/S8       '(cl:signed-byte 8))
-                                                    (ElementType/USFix     '(cl:and cl:fixnum cl:unsigned-byte))
-                                                    (ElementType/US64     '(cl:unsigned-byte 64))
-                                                    (ElementType/US32     '(cl:unsigned-byte 32))
-                                                    (ElementType/US16     '(cl:unsigned-byte 16))
-                                                    (ElementType/US8      '(cl:unsigned-byte 8))
-                                                    (ElementType/Character 'cl:character))
-                                    :if-exists (cl:case if-exists
-                                                 (IfExists/ExistsError ':error)
-                                                 (IfExists/NewVersion ':new-version)
-                                                 (IfExists/Rename ':rename)
-                                                 (IfExists/RenameAndDelete ':rename-and-delete)
-                                                 (IfExists/Overwrite ':overwrite)
-                                                 (IfExists/Append ':append)
-                                                 (IfExists/Supersede ':supersede))
-                                    :if-does-not-exist (cl:case if-does-not-exist
-                                                         (IfDoesNotExist/DNExistError ':error)
-                                                         (IfDoesNotExist/Create ':create))))
-        (cl:error () (Err (PathError "Error opening output stream with path." path))))))
-
-  (declare %open-twoway (Pathname -> IFExists -> IfDoesNotExist -> ElementType -> (Result FileError FileStream)))
-  (define (%open-twoway path if-exists if-does-not-exist etype)
-    (match (Tuple (%open-input path etype) (%open-output path if-exists if-does-not-exist etype))
-      ((Tuple (Ok a) (Ok b))
-       (Ok (TwoWayStream a b)))
-      ((Tuple (Ok _) (Err r))
-       (Err r))
-      ((Tuple (Err r) (Ok _))
-       (Err r))
-      (_
-       (Err (PathError "Setting up two-way stream failed in both directions" path)))))
-
-  (declare %open-broadcast ((List Pathname) -> IfExists -> IfDoesNotExist -> ElementType -> (Result FileError FileStream)))
-  (define (%open-broadcast paths if-exists if-does-not-exist etype)
-    (let ((streams (map (fn (p)
-                          (%open-output p if-exists if-does-not-exist etype))
-                        paths))
-          (error-found (iter:find! res:err? (iter:into-iter streams))))
-      (match error-found
-        ((Some (Err x))
-         (Err x))
-        ((None)
-         (Ok (BroadcastStream (iter:collect! (map (fn (x)
-                                                    (unwrap (the (Optional FStream)
-                                                                 (into x))))
-                                                  (iter:into-iter streams))))))
-        (_ (Err (FileError "Invalid Stream" ""))))))
-
-
-  (declare open (StreamOptions -> (Result FileError FileStream)))
-  (define (open stream-options)
-    (match stream-options
-      ((Input path etype)
-       (match (%open-input path etype)
-         ((Ok s)
-          (Ok (InputStream s)))
-         ((Err r)
-          (Err r))))
-      ((Output path exists does-not-exist etype)
-       (match (%open-output path exists does-not-exist etype)
-         ((Ok s)
-          (Ok (OutputStream s)))
-         ((Err r)
-          (Err r))))
-      ((TwoWay path exists does-not-exist etype)
-       (%open-twoway path exists does-not-exist etype))
-      ((Broadcast paths exists does-not-exist etype)
-       (%open-broadcast paths exists does-not-exist etype)))))
-
-;;;
-;;; Operations on FileStreams
-;;;
-
-#+ignore(coalton-toplevel
-
-  (define-class (Streamable :a)
-    "A class of types which are able to be written to or read from a file."
-    (open (StreamOptions -> (Result FileError (Filestream :a))))
-    (read (FileStream -> :a))
-    (write (FileStream -> :a -> Unit)))
-
-  
-  ;(define (write stream data))
-  )
-
-#+ignore(coalton-toplevel
-
-          (define (element-type stream)
-            (let ((str (match stream
-                         ((InputStream str)
-                          str)
-                         ((OutputStream str)
-                          str)
-                         ((TwoWayStream stri _)
-                          stri)
-                         ((BroadcastStream strs)
-                          (list:car strs)))))
-              (lisp ElementType (str)
-                (cl:typecase (cl:stream-element-type str)
-                  (cl:integer                          'ElementType/Int)
-                  (cl:fixnum                           'ElementType/SFix)
-                  ((cl:signed-byte 64)                 'ElementType/S64)
-                  ((cl:signed-byte 32)                 'ElementType/S32)
-                  ((cl:signed-byte 16)                 'ElementType/S16)
-                  ((cl:signed-byte 8)                  'ElementType/S8)
-                  ((cl:and cl:fixnum cl:unsigned-byte) 'ElementType/USFix)
-                  ((cl:unsigned-byte 64)               'ElementType/US64)
-                  ((cl:unsigned-byte 32)               'ElementType/US32)
-                  ((cl:unsigned-byte 16)               'ElementType/US16)
-                  ((cl:unsigned-byte 8)                'ElementType/US8)
-                  (cl:character                        'ElementType/Character)))))
-
-          (define-class (Streamable :a)
-            (write (stream )))
-          )
-                                       
-
-
-#+ignore
-(coalton-toplevel                       
-
-  (declare open (Pathname -> DirectionOption -> IfExistsOption -> IfDoesNotExistOption -> FileStream))
-  (define (open filespec direction if-exists if-does-not-exist)
-    "Opens a filestream given a file."
-    (lisp FileStream (filespec direction if-exists if-does-not-exist)
-      (cl:let ((direct (match-direction-option direction))
-               (exists (match-if-exists-option if-exists))
-               (doesnt-exist (match-if-does-not-exist-option if-does-not-exist)))
-        (cl:open filespec :direction direct :if-exists exists :if-does-not-exist doesnt-exist))))
-
-  (declare write (String -> FileStream -> String))
-  (define (write data stream)
-    "Writes a string to the stream."
-    (lisp String (data stream)
-      (cl:write-sequence data stream)))
-
-  (declare write-byte (Ufix -> FileStream -> Unit))
-  (define (write-byte x stream)
-    "Writes a single byte to a stream."
-    (lisp UFix (x stream)
-      (cl:write-byte x stream))
-    Unit)
-  
-  (declare write-char (Char -> FileStream -> Unit))
-  (define (write-char c stream)
-    "Writes a single character to a stream."
-    (lisp Char (c stream)
-      (cl:write-char c stream))
-    Unit)
-  
-  (declare read (FileStream -> String))
-  (define (read stream)
-    (lisp String (stream)
-      (cl:read stream)))
-  
-  (declare close (FileStream -> Unit))
-  (define (close stream)
-    "Closes a stream."
-    (lisp Boolean (stream)
-      (cl:close stream))
-    Unit)
-
-  (declare load (Pathname -> Boolean))
-  (define (load filespec)
-    "Loads a lisp file."
-    (lisp Boolean (filespec)
-      (cl:load filespec)))
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-  ;;
-  ;; there are two options for write-to-file, one using with-open-file and one using native coalton code.
-  ;; We'll pick one in the review process
-  ;;
-
-  (declare write-to-file (Pathname -> IFExistsOption -> IfDoesNotExistOption -> String -> Unit))
-  #+ignore(define (write-to-file filepath if-exists if-does-not-exist data)
-    "Writes data to a given file, with if-exists options `ExistsError` `Append` and `Supersede`, and if-does-not-exist options `DoesNotExistError` and `Create`."
-    (lisp Boolean (filepath if-exists if-does-not-exist data)
-        (cl:let ((exists (match-if-exists-option if-exists))
-                 (doesnt (match-if-does-not-exist-option if-does-not-exist)))
-          (cl:with-open-file (stream filepath :direction :output :if-exists exists :if-does-not-exist doesnt)
-            (cl:write-sequence data stream)))
-        cl:t)
-    (traceobject "Data written to" filepath))
-
-  ;; just coalton
-  (define (write-to-file filename if-exists if-does-not-exist data)
-    "Writes data to a given file, with if-exists options `ExistsError` `Append` and `Supersede`, and if-does-not-exist options `DoesNotExistError` and `Create`."
-    (let ((Stream (open filename OutputFile if-exists if-does-not-exist)))
-      (write data stream)
-      (close stream))
-    (traceobject "Data written to" filename)))
-
+                (match )))))
+                                     
 #+sb-package-locks
 (sb-ext:lock-package "COALTON-LIBRARY/FILE")
