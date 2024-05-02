@@ -11,7 +11,9 @@
    #:ok?
    #:err?
    #:map-err
-   #:flatten))
+   #:flatten
+   #:unwrap-or-error
+   #:unwrap-or-warn))
 
 (in-package #:coalton-library/result)
 
@@ -52,6 +54,22 @@
       ((Ok x) x)
       ((Err x) x)))
 
+  (declare unwrap-or-error (Signal :a => (Result :a :b) -> :b))
+  (define (unwrap-or-error x)
+    "Unwraps a `result` or signals an error."
+    (match x
+      ((Ok x) x)
+      ((Err x)
+       (error x))))
+
+  (declare unwrap-or-warn (Signal :a => (Result :a :b) -> :b))
+  (define (unwrap-or-warn x)
+    "Unwraps a `result` or signals an error."
+    (match x
+      ((Ok x) x)
+      ((Err x)
+       (warn x))))
+  
   ;;
   ;; Instances
   ;;
@@ -151,12 +169,12 @@
       (let out =
         (iter:collect!
          (iter:map-while! (fn (x)
-                             (match x
-                               ((Ok x) (Some x))
-                               ((Err e)
-                                (cell:write! error (Some e))
-                                None)))
-                           iter)))
+                            (match x
+                              ((Ok x) (Some x))
+                              ((Err e)
+                               (cell:write! error (Some e))
+                               None)))
+                          iter)))
       (match (cell:read error)
         ((None) (Ok out))
         ((Some e) (Err e))))))

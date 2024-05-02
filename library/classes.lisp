@@ -272,16 +272,15 @@
   (define-class (Signal :a)
     "Signal an error by calling `CL:ERROR` or signal a warning by calling `CL:WARN`."
     (error (:a -> :b))
-    (warn  (:a -> Unit)))
+    (warn  (:a -> :b)))
 
  (define-instance (Signal String)
    (define (error str)
      (lisp :a (str)
        (cl:error str)))
    (define (warn str)
-     (lisp Unit (str)
-       (cl:format cl:*error-output* "COALTON WARNING: ~A~%" str)
-       Unit)))
+     (lisp :b (str)
+       (cl:format cl:*error-output* "COALTON WARNING: ~A~%" str))))
 
   ;;
   ;; Unwrappable for fallible unboxing

@@ -12,34 +12,30 @@
    (#:vec #:coalton-library/vector)
    (#:res #:coalton-library/result)
    (#:types #:coalton-library/types)
-   (#:str #:coalton-library/string))
+   (#:str #:coalton-library/string)
+   (#:char #:coalton-library/char))
   (:export
    
    #:Pathname
+   #:TryintoPathname
    #:Merge
 
    #:exists?
-   #:if-exists
-   #:if-does-not-exist
-   #:if-directory
-   #:if-file
+   #:directory?
+   #:file?
 
    ;; directory functions
-   #:mkdir
+   #:create-directory
    #:ensure-directories
    #:directory-files
    #:subdirectories
    #:empty?
-   #:if-empty
-   #:if-not-empty
-   #:rmdir
-   #:rmdir-unsafe
+   #:remove-directory
+   #:remove-directory-unsafe
    #:system-relative-pathname
 
    #:copy
-   #:delete
-   #:read-file-string
-   #:read-file-lines
+   #:delete-file
 
    #:FStream
    #:FileStream
@@ -74,13 +70,23 @@
    #:read-sequence
    #:write
    #:write-sequence
-   
+
+   #:with-open-file
    #:read-char
    #:read-byte
    #:write-char
    #:write-byte
    #:write-string
-))
+
+   #:force
+   #:finish
+   #:clear
+   #:file-position
+   #:set-file-position
+   
+   #:read-file-string
+   #:read-file-lines
+   ))
 
 (in-package #:coalton-library/file)
 
@@ -88,6 +94,12 @@
 
 #+coalton-release
 (cl:declaim #.coalton-impl/settings:*coalton-optimize-library*)
+
+;;;
+;;; File Error handling
+;;;
+;;; File errors will return results of type `(Result FileError :a)`
+;;;
 
 
 ;;;
@@ -98,41 +110,16 @@
 
   (repr :native cl:pathname)
   (define-type Pathname
-    "Pathname object. Uses `cl:pathname`")
-
-  ;; will be deprecated, but right now this is the only way to conveniently use pathnames
-  (define-instance (Into String Pathname)
-    (define (into s)
-      (lisp Pathname (s)
-        (cl:pathname s))))
-  
-  (define-instance (TryInto String Pathname)
-        (define (tryinto s)
-          (lisp (Result String Pathname) (s)
-            (cl:handler-case (Ok (cl:pathname s))
-              (cl:error ()                
-                (Err "Invalid pathname string."))))))
-
-  (define-instance (Into Pathname String)
-    (define (into p)
-      (lisp String (p)
-        (cl:namestring p))))
-
-  (declare merge (Pathname -> Pathname -> Pathname))
-  (define (merge path1 path2)
-    "Merges two pathnames together. The order is important- for adding subdirectories, make sure to put the subpath (the one without the leading `/`) in `path`."
-    (lisp Pathname (path1 path2)
-      (cl:merge-pathnames path1 path2))))
-
-;;;
-;;; File Error handler
-;;;
+    "Pathname object. Uses `cl:pathname`"))
 
 (coalton-toplevel
 
   ;; TODO finalize FileError types, error/warning messages
   (define-type FileError
+    "Errors for file functions. File functions will return results of the type `(Result FileError :a)`. You can add signalling by wrapping a returned FileError with either `warn` or `error` (e.g. `(match (open (Input \"file.txt\")) ((Ok stream) stream) ((Err r) (warn r)))`)"
+    (TryintoPathnameError String String)
     (PathError String Pathname)
+    (LispIMPLError String)
     (FileError String String)
     (StreamError String)
     (ASDFError String String)
@@ -146,15 +133,18 @@
         ((PathError str path)
          (error (lisp String (str path)
                   (cl:format cl:nil "Path Error:~%~%~a ~a" str path))))
-        ((FileError str path)
-         (error (lisp String (str path)
-                  (cl:format cl:nil "File Error:~%~%~a ~a" str path))))
+        ((FileError str1 str2)
+         (error (lisp String (str1 str2)
+                  (cl:format cl:nil "File Error:~%~%~a ~a" str1 str2))))
         ((ASDFError str1 str2)
          (error (lisp String (str1 str2)
                   (cl:format cl:nil "ASDF Error:~%~%~a ~a" str1 str2))))
         ((EOF)
          (error (lisp String ()
                   (cl:format cl:nil "Error:~%~%End of File"))))
+        ((LispIMPLError str)
+         (error (lisp String (str)
+                  (cl:format cl:nil "Lisp Implementation Error:~%~%~a" str))))
         ((WriteError str1 str2)
          (error (lisp String (str1 str2)
                   (cl:format cl:nil "Write Error:~%~%~a ~a" str1 str2))))
@@ -165,9 +155,9 @@
         ((PathError str path)
          (warn (lisp String (str path)
                  (cl:format cl:nil "~a ~a" str path))))
-        ((FileError str path)
-         (error (lisp String (str path)
-                  (cl:format cl:nil "~a ~a" str path))))
+        ((FileError str1 str2)
+         (error (lisp String (str1 str2)
+                  (cl:format cl:nil "~a ~a" str1 str2))))
         ((ASDFError str1 str2)
          (warn (lisp String (str1 str2)
                  (cl:format cl:nil "~a ~a" str1 str2))))
@@ -178,6 +168,39 @@
                  (cl:format cl:nil "~a ~a" str1 str2))))
         (_ (warn "not yet"))))))
 
+;;;
+;;; Pathname type
+;;;
+
+(coalton-toplevel
+
+  (define-class (TryintoPathname :a)
+    (tryinto-pathname (:a -> (Result FileError Pathname))))
+
+  (define-instance (TryIntoPathname String)
+    (define (tryinto-pathname s)
+      (lisp (Result FileError Pathname) (s)
+        (cl:handler-case (Ok (cl:pathname s))
+          (cl:error ()                
+            (Err (TryintoPathnameError "Invalid pathname string:" s)))))))
+
+  (define-instance (TryIntoPathname Pathname)
+    (define (tryinto-pathname s)
+      (Ok s)))
+  
+  (define-instance (Into Pathname String)
+    (define (into p)
+      (lisp String (p)
+        (cl:namestring p))))
+  
+  (declare merge ((TryintoPathname :a) (TryintoPathname :b) => :a -> :b -> (Result FileError Pathname)))
+  (define (merge path1 path2)
+    "Merges two pathnames together. The order is important- for adding subdirectories, make sure to put the subpath (the one without the leading `/`) in `path1`."
+    (do
+     (p1 <- (tryinto-pathname path1))
+     (p2 <- (tryinto-pathname path2))
+      (pure (lisp Pathname (p1 p2)
+              (cl:merge-pathnames p1 p2))))))
 
 ;;;
 ;;; Handling existential path queries
@@ -185,45 +208,29 @@
 
 (coalton-toplevel
 
-  (declare exists? (Pathname -> Boolean))
+  (declare exists? ((TryintoPathname :a) => :a -> (Result FileError Boolean)))
   (define (exists? path)
     "Returns whether a file or directory exists."
-    (lisp Boolean (path)
-      (to-boolean (cl:probe-file path))))
+    (do
+     (p <- (tryinto-pathname path))
+     (pure (lisp Boolean (p)
+             (to-boolean (cl:probe-file p))))))
 
-  (declare if-exists (Pathname -> :a -> (Result FileError :a)))
-  (define (if-exists path action)
-    "Performs an action if the path exists, else returns an error."
-    (if (exists? path)
-        (Ok action)
-        (Err (PathError "This path does not represent an existing file or directory:" path))))
+  (declare directory? ((TryintoPathname :a) => :a -> (Result FileError Boolean)))
+  (define (directory? path)
+    "Returns whether a path represents a directory."
+    (do
+     (p <- (tryinto-pathname path))
+     (pure (lisp Boolean (p)
+             (cl:not (to-boolean (uiop:file-pathname-p p)))))))
 
-  (declare if-does-not-exist (Pathname -> :a -> (Result FileError :a)))
-  (define (if-does-not-exist path action)
-    "Performs an action if the path does not exist, else returns an error."
-    (if (exists? path)
-        (Err (PathError "This file or directory already exists:" path))
-        (Ok action)))
-
-  ;;
-  ;; Handling quanderies of path identities
-  ;;
-  
-  (declare if-directory (Pathname -> :a -> (Result FileError :a)))
-  (define (if-directory path action)
-    "Performs an action only if the path represents a directory."
-    (lisp (Result FileError :a) (path action)
-      (cl:if (uiop:file-pathname-p path)
-             (Err (PathError "Pathname does not represent a directory. Please amend with a trailing `/`." path))
-             (Ok action))))
-
-  (declare if-file (Pathname -> :a -> (Result FileError :a)))
-  (define (if-file path action)
-    "Performs an action only if the path represents a directory."
-    (lisp (Result FileError :a) (path action)
-      (cl:if (uiop:file-pathname-p path)             
-             (Ok action)
-             (Err (PathError "Pathname represents a directory. Please remove the trailing `/` or add a valid filename." path))))))
+  (declare file? ((TryintoPathname :a) => :a -> (Result FileError Boolean)))
+  (define (file? path)
+    "Returns whether a path represents a file."
+    (do
+     (p <- (tryinto-pathname path))
+     (pure (lisp Boolean (p)
+             (to-boolean (uiop:file-pathname-p p)))))))
 
 ;;;
 ;;; Working with directories
@@ -231,80 +238,88 @@
 
 (coalton-toplevel
   
-  (declare mkdir (Pathname -> (Result FileError Pathname)))
-  (define (mkdir path)
-    "Makes a directory or chain of directories if they don't already exist. The pathname must end with a trailing `/`."
-    (if-directory path (lisp Pathname (path)
-                        (cl:ensure-directories-exist path))))
+  (declare create-directory ((TryintoPathname :a) => :a -> (Result FileError Pathname)))
+  (define (create-directory path)
+    "This is equivalent to `mkdirp`. Makes a directory or chain of directories if they don't already exist. The pathname must end with a trailing `/`."
+    (do
+     (p <- (tryinto-pathname path))
+     (dir <- (directory? p))
+      (if dir
+          (Ok (lisp Pathname (p)
+                (cl:ensure-directories-exist p)))
+          (Err (PathError "This path does not represent a directory:" p)))))
 
-  (declare ensure-directories (Pathname -> Unit))
+  (declare ensure-directories ((TryintoPathname :a) => :a -> (Result FileError Unit)))
   (define (ensure-directories path)
     "Ensures that a directory or chain of directories exists. The pathname can end with either a file or directory; ending with a file will ensure all directories above that file, ending with a directory (with a trailing '/') will ensure all directories above and including that directory."
-    (lisp Unit (path)
-      (cl:ensure-directories-exist path)
-      Unit))
+    (do
+     (p <- (tryinto-pathname path))
+     (pure (lisp Unit (p)
+             (cl:ensure-directories-exist p)
+             Unit))))
 
-  (declare directory-files (Pathname -> (Result FileError (List Pathname))))
+  (declare directory-files ((TryintoPathname :a) => :a -> (Result FileError (List Pathname))))
   (define (directory-files path)
     "Returns all files within the directory. Returns an error if the pathname does not represent a directory."
-    (if-directory path (lisp (List Pathname) (path)
-                        (uiop:directory-files path))))
+    (do
+     (p <- (tryinto-pathname path))
+     (dir <- (directory? p))
+      (if dir
+          (Ok (lisp (List Pathname) (p)
+                (uiop:directory-files p)))
+          (Err (PathError "Pathname does not represent a directory. Please add a trailing `\`." p)))))
 
-  (declare subdirectories (Pathname -> (Result FileError (List Pathname))))
+  (declare subdirectories ((TryintoPathname :a) => :a -> (Result FileError (List Pathname))))
   (define (subdirectories path)
     "Returns all subdirectories within the directory. Returns an error if the pathname does not represent a directory."
-    (if-directory path (lisp (List Pathname) (path)
-                        (uiop:subdirectories path))))
+    (do
+     (p <- (tryinto-pathname path))
+     (dir <- (directory? p))
+      (if dir
+          (Ok (lisp (List Pathname) (path)
+                (uiop:subdirectories path)))
+          (Err (PathError "Pathname does not represent a directory. Please add a trailing `\`." p)))))
 
   ;;
   ;; Handling directory behavior that depends on emptiness
   ;;
   
-  (declare empty? (Pathname -> (Result FileError Boolean)))
+  (declare empty? ((TryintoPathname :a) => :a -> (Result FileError Boolean)))
   (define (empty? path)
     "Checks whether a directory is empty."
-    (if-directory path
-                  (and (list:null? (unwrap (directory-files path)))
-                       (list:null? (unwrap (subdirectories path))))))
+    (do
+     (p <- (tryinto-pathname path))
+     (dir <- (directory? p))
+      (if dir
+          (Ok (and (list:null? (unwrap (directory-files p)))
+                   (list:null? (unwrap (subdirectories p)))))
+          (Err (PathError "Pathname does not represent a directory" p)))))
 
-  (declare if-empty (Pathname -> :a -> (Result FileError :a)))
-  (define (if-empty path action)
-    "Performs an action only if the directory is empty."
-    (match (empty? path)
-      ((Ok mt)
-       (if mt
-           (Ok action)
-           (Err (PathError "Directory is not empty." path))))
-      ((Err x)
-       (Err x))))
-
-  (declare if-not-empty (Pathname -> :a -> (Result FileError :a)))
-  (define (if-not-empty path action)
-    "Performs an action only if the directory is not empty."
-    (match (empty? path)
-      ((Ok mt)
-       (if mt
-           (Err (PathError "Directory is not empty." path))
-           (Ok action)))
-      ((Err x)
-       (Err x))))
-
-  
-  (declare rmdir (Pathname -> (Result FileError Unit)))
-  (define (rmdir path)
+  (declare remove-directory ((TryintoPathname :a) => :a -> (Result FileError Unit)))
+  (define (remove-directory path)
     "Deletes a directory `dir` if it's empty, otherwise, returns`FileError`."
-    (if-empty path (lisp Unit (path)
-                    (uiop:delete-empty-directory path)
-                    Unit)))
+    (do
+     (p <- (tryinto-pathname path))
+     (mt <- (empty? p))
+      (if mt
+          (Ok (Lisp Unit (p)
+                (uiop:delete-empty-directory p)
+                Unit))
+          (Err (PathError "Directory is not empty:" p)))))
   
-  (declare rmdir-unsafe (Pathname -> (Result FileError Unit)))
-  (define (rmdir-unsafe path)
-    "Deletes a target directory recursively. Equivalent to `rm -rf`. Errors if the path is not a directory."
-    (if-directory path (lisp Unit (path)
-                        (uiop:delete-directory-tree path :validate cl:t)
-                        Unit)))
+  (declare remove-directory-unsafe ((TryintoPathname :a) => :a -> (Result FileError Unit)))
+  (define (remove-directory-unsafe path)
+    "Deletes a target directory recursively. Equivalent to `rm -r`. Errors if the path is not a directory (if the path wasn't a directory, this would remove the path's parent directory)."
+    (do
+     (p <- (tryinto-pathname path))
+     (dir <- (directory? p))
+      (if dir
+              (Ok (lisp Unit (path)
+                    (uiop:delete-directory-tree path :validate cl:t)
+                    Unit))
+              (Err (PathError "Path does not represent a directory." p)))))
   
-  (declare system-relative-pathname (String -> String -> (Result FileError Pathname)))
+  (declare system-relative-pathname ((Into :a String) => :a -> String -> (Result FileError Pathname)))
   (define (system-relative-pathname system-name name)
     "Generates a system-relative-pathname for a given filename or path."
     (lisp (Result FileError Pathname) (system-name name)
@@ -317,45 +332,42 @@
 
 (coalton-toplevel
 
-  ;; probably remove
-  (declare copy (Pathname -> Pathname -> (Result FileError (Result FileError Unit))))
+  (declare copy ((TryintoPathname :a) (TryintoPathname :b) => :a -> :b -> (Result FileError Unit)))
   (define (copy input output)
-    "Copies a file to a target file."
-    (if-does-not-exist
-     output
-     (if-file
-      input
-      (lisp Unit (input output)
-        (uiop:copy-file input output)
-        Unit))))
+    "Copies a file to a nonexistant file. Will error if the output path already exists or if the input path isn't a file."
+    (do
+     (in <- (tryinto-pathname input))
+     (out <- (tryinto-pathname output))
+      (output-exists <- (exists? out))
+      (input-is-file <- (file? in))
+      (if output-exists
+          (Err (PathError "Invalid output for copying, path already exists:" out))
+          (if (not input-is-file)
+              (Err (PathError "Invalid input for copying, path is not a file:" in))
+              (pure (lisp Unit (in out)
+                      (uiop:copy-file in out)
+                      Unit))))))
 
-  (declare delete (Pathname -> (Result FileError Unit)))
-  (define (delete path)
-    "Deletes a given file, comments on whether the file exists."
-    (if-file path
-             (lisp Unit (path)
-               (uiop:delete-file-if-exists path))))
-  
-  (declare read-file-string (Pathname -> (Result FileError String)))
-  (define (read-file-string path)
-    "Reads a file into a string."
-    (lisp (Result FileError String) (path)
-      (cl:handler-case (Ok (uiop:read-file-string path))
-        (cl:error () (Err (PathError "File does not exist." path))))))
-
-  (declare read-file-lines (Pathname -> (Result FileError (List String))))
-  (define (read-file-lines path)
-    "Reads a file into lines."
-    (lisp (Result FileError (List String)) (path)
-      (cl:handler-case (Ok (uiop:read-file-lines path))
-        (cl:error () (Err (PathError "File does not exist." path)))))))
+  (declare delete-file ((TryintoPathname :a) => :a -> (Result FileError Unit)))
+  (define (delete-file path)
+    "Deletes a given file if the file exists."
+    (do
+     (p <- (tryinto-pathname path))
+     (is-file <- (file? p))
+      (if is-file
+          (Ok (lisp Unit (p)
+                (uiop:delete-file-if-exists p)))
+          (Err (PathError "Can't delete file: path does not represent a file" p))))))
 
 ;;;
-;;; FileStreams, options, and opening
+;;; FStreams, FileStreams, and options
 ;;;
 
 (coalton-toplevel
 
+  ;;
+  ;; FStreams, FileStreams, and options
+  ;;
   (repr :native cl:file-stream)
   (define-type FStream
     "Represents a lisp file-stream, not intended to be accessed directly.")
@@ -370,11 +382,10 @@
   ;;
   ;; Stream Options
   ;;
-  
   (repr :enum)
   (define-type IfExists
     "Possible options for opening a stream when the file exists."
-    ExistsError
+    EError
     NewVersion
     Rename
     RenameAndDelete
@@ -385,20 +396,15 @@
   (repr :enum)
   (define-type IfDoesNotExist
     "Possible options for opening a stream when the file does not exist."
-    DNExistError
+    DNEError
     Create)
   
   (define-type StreamOptions
-    "A type for providing parameters for opening streams."
-    (Input Pathname)
-    (Output Pathname IfExists IfDoesNotExist)
-    (TwoWay Pathname IfExists IfDoesNotExist)
-    (Broadcast (list Pathname) IfExists IfDoesNotExist))
-
-  ;;
-  ;; Opening file streams
-  ;;
-  
+    "A type for providing parameters for opening streams. StreamOptions take strings for pathnames, but they will error if they are not proper and appropriate pathnames."
+    (Input String)
+    (Output String IfExists IfDoesNotExist)
+    (TwoWay String IfExists IfDoesNotExist)
+    (Broadcast (list String) IfExists IfDoesNotExist))
   (declare %open-input (Pathname -> types:lisptype -> (Result FileError FStream)))
   (define (%open-input path etype)
     "Opens an input stream for the given filepath, and for a given type."
@@ -408,7 +414,9 @@
                                     :element-type etype))
         (cl:error () (Err (PathError "Error opening input stream with path" path))))))
 
-
+  ;;
+  ;; Opening streams
+  ;;
   (declare %open-output (Pathname -> IfExists -> IfDoesNotExist -> types:lisptype -> (Result FileError FStream)))
   (define (%open-output path if-exists if-does-not-exist etype)
     "Opens an output stream for the given filepath, and for a given type."
@@ -432,58 +440,46 @@
   (declare %open-twoway (Pathname -> IFExists -> IfDoesNotExist -> types:lisptype -> (Result FileError (FileStream :a))))
   (define (%open-twoway path if-exists if-does-not-exist etype)
     "Opens an two way stream for the given filepath, and for a given type."
-    (match (Tuple (%open-input path etype) (%open-output path if-exists if-does-not-exist etype))
-      ((Tuple (Ok a) (Ok b))
-       (Ok (TwoWayStream a b)))
-      ((Tuple (Ok _) (Err r))
-       (Err r))
-      ((Tuple (Err r) (Ok _))
-       (Err r))
-      (_
-       (Err (PathError "Setting up two-way stream failed in both directions" path)))))
+    (do
+     (in <- (%open-input path etype))
+     (out <- (%open-output path if-exists if-does-not-exist etype))
+      (pure (TwoWayStream in out))))
 
-  (declare %open-broadcast ((List Pathname) -> IfExists -> IfDoesNotExist -> types:lisptype -> (Result FileError (FileStream :a))))
+  (declare %open-broadcast ((TryintoPathname :a) => (List :a) -> IfExists -> IfDoesNotExist -> types:lisptype -> (Result FileError (FileStream :b))))
   (define (%open-broadcast paths if-exists if-does-not-exist etype)
     "Opens a broadcast stream for a list of filepaths. These are all output streams."
-    (let ((streams (map (fn (p)
-                          (%open-output p if-exists if-does-not-exist etype))
-                        paths))
-          (error-found (iter:find! res:err? (iter:into-iter streams))))
-      (match error-found
-        ((Some (Err x))
-         (Err x))
-        ((None)
-         (Ok (BroadcastStream (iter:collect! (map (fn (x)
-                                                    (unwrap (the (Optional FStream)
-                                                                 (into x))))
-                                                  (iter:into-iter streams))))))
-        (_ (Err (FileError "Invalid Stream" ""))))))
+    (let streams = (cell:new Nil))
+    (for path in paths
+         (do
+          (p <- (tryinto-pathname path))
+          (stream <- (%open-output p if-exists if-does-not-exist etype))
+           (Ok (BroadcastStream (cell:push! streams stream)))))
+    (Ok (BroadcastStream (cell:read streams))))
 
   (declare %open (StreamOptions -> types:lisptype -> (Result FileError (FileStream :a))))
   (define (%open stream-options etype)
     "Opens a FileStream for a given type and StreamOptions."
     (match stream-options
       ((Input path)
-       (match (%open-input path etype)
-         ((Ok s)
-          (Ok (InputStream s)))
-         ((Err r)
-          (Err r))))
+       (do
+        (p <- (tryinto-pathname path))
+        (in <- (%open-input p etype))
+         (pure (InputStream in))))
       ((Output path exists does-not-exist)
-       (match (%open-output path exists does-not-exist etype)
-         ((Ok s)
-          (Ok (OutputStream s)))
-         ((Err r)
-          (Err r))))
+       (do
+        (p <- (tryinto-pathname path))
+        (out <- (%open-output p exists does-not-exist etype))
+         (pure (OutputStream out))))
       ((TwoWay path exists does-not-exist)
-       (%open-twoway path exists does-not-exist etype))
+       (do
+        (p <- (tryinto-pathname path))
+        (%open-twoway p exists does-not-exist etype)))
       ((Broadcast paths exists does-not-exist)
        (%open-broadcast paths exists does-not-exist etype))))
 
   ;;
+  ;; Closing streams
   ;;
-  ;;
-
   (declare %close-fstream ((FStream -> (Result FileError Unit))))
   (define (%close-fstream fs)
     "Closes an FStream."
@@ -492,30 +488,28 @@
                              (cl:close fs)
                              Unit))
         (cl:error () (Err (StreamError "Issue closing stream."))))))
-  
-  (declare %close ((Result FileError (FileStream :a)) -> (Result FileError Unit)))
+
+  (declare %close ((FileStream :a) -> (Result FileError Unit)))
   (define (%close fs)
     "Closes a Filestream, if it's open."
     (match fs
-      ((Err _r)
-       (Err (StreamError "Stream can't be closed, already not open.")))
-      ((Ok s)
-       (match s
-         ((InputStream f)
-          (%close-fstream f))
-         ((OutputStream f)
-          (%close-fstream f))
-         ((TwoWayStream in out)
-          (%close-fstream in)
-          (%close-fstream out))
-         ((BroadcastStream streams)
-          (Ok (for stream in streams
-                   (%close-fstream stream))))))))
+      ((InputStream f)
+       (%close-fstream f))
+      ((OutputStream f)
+       (%close-fstream f))
+      ((TwoWayStream in out)
+       (%close-fstream in)
+       (%close-fstream out))
+      ((BroadcastStream streams)
+
+       ;; mapM for-each M
+       (Ok (for stream in streams
+                (do
+                 (%close-fstream stream)))))))
 
   ;;
-  ;; Reading from File Streams
+  ;; Reading from Input streams
   ;;
-  
   (declare %read-char-from-stream (FStream -> (Result FileError Char)))
   (define (%read-char-from-stream fs)
     "Reads a character from an FStream."
@@ -524,19 +518,15 @@
         (cl:end-of-file () (Err (EOF)))
         (cl:error () (Err (ReadError "Non-EOF error reading from stream" fs))))))
   
-  (declare read-char ((Result FileError (FileStream Char)) -> (Result FileError Char)))
+  (declare read-char ((FileStream Char) -> (Result FileError Char)))
   (define (read-char fs)
     "Reads a character from a character FileStream."
     (match fs
-      ((Ok stream)
-       (match stream
-         ((InputStream s)
-          (%read-char-from-stream s))
-         ((TwoWayStream in _out)
-          (%read-char-from-stream in))
-         (_ (Err (ReadError "Invalid Stream" "Target stream is Output only.")))))
-      ((Err r)
-       (Err r))))
+      ((InputStream s)
+       (%read-char-from-stream s))
+      ((TwoWayStream in _out)
+       (%read-char-from-stream in))
+      (_ (Err (ReadError "Invalid Stream" "Only input streams can be read.")))))
 
   (declare %read-byte-from-stream (FStream -> (Result FileError :a)))
   (define (%read-byte-from-stream fs)
@@ -545,21 +535,19 @@
         (cl:end-of-file () (Err (EOF)))
         (cl:error () (Err (ReadError "Non-EOF error reading from stream" fs))))))
   
-  (declare read-byte ((Result FileError (FileStream :a)) -> (Result FileError :a)))
+  (declare read-byte ((FileStream :a) -> (Result FileError :a)))
   (define (read-byte fs)
+    "Reads a byte from the FileStream."
     (match fs
-      ((Ok stream)
-       (match stream
-         ((InputStream s)
-          (%read-byte-from-stream s))
-         ((TwoWayStream in _out)
-          (%read-byte-from-stream in))
-         (_ (Err (ReadError "Invalid Stream" "Target stream is Output only.")))))
-      ((Err r)
-       (Err r))))
+      ((InputStream s)
+       (%read-byte-from-stream s))
+      ((TwoWayStream in _out)
+       (%read-byte-from-stream in))
+      (_ (Err (ReadError "Invalid Stream" "Target stream is Output only.")))))
 
-  (declare %read-sequence ((Streamable :a) => (Result FileError (FileStream :a)) -> (Result FileError (iter:Iterator :a))))
+  (declare %read-sequence ((Streamable :a) => (FileStream :a) -> (Result FileError (iter:Iterator :a))))
   (define (%read-sequence fs)
+    "Reads a file into an Iterator."
     (let ((sequence (cell:new Nil))
           (fread (fn ()
                    (match (read fs)
@@ -573,9 +561,8 @@
       (fread)))
 
   ;;
-  ;; Wrte
+  ;; Writing to streams
   ;;
-  
   (declare %write-char-to-stream (FStream -> :a -> (Result FileError Unit)))
   (define (%write-char-to-stream fs data)
     (lisp (Result FileError Unit) (fs data)
@@ -585,23 +572,20 @@
         (Cl:Nil () (Err (WriteError "Invalid Write Operation" "")))
         (cl:error () (Err (WriteError "Invalid Write Operation." ""))))))
   
-  (declare write-char ((Result FileError (FileStream :a)) -> :a -> (Result FileError Unit)))
+  (declare write-char ((FileStream :a) -> :a -> (Result FileError Unit)))
   (define (write-char fs data)
+    "Writes a `Char` to the stream."
     (match fs
-         ((Ok s)
-          (match s
-            ((OutputStream stream)
-             (%write-char-to-stream stream data))
-            ((TwoWayStream _in out)
-             (%write-char-to-stream out data))
-            ((BroadcastStream streams)
-             (for s in streams
-                  (%write-char-to-stream s data))
-             (Ok Unit))
-            ((InputStream _)
-             (Err (WriteError "Invalid write operation:" "Target stream is Input only.")))))
-         ((Err r)
-          (Err r))))
+      ((OutputStream stream)
+       (%write-char-to-stream stream data))
+      ((TwoWayStream _in out)
+       (%write-char-to-stream out data))
+      ((BroadcastStream streams)
+       (for s in streams
+            (%write-char-to-stream s data))
+       (Ok Unit))
+      ((InputStream _)
+       (Err (WriteError "Invalid write operation:" "Target stream is Input only.")))))
 
   (declare %write-byte-to-stream (FStream -> :a -> (Result FileError Unit)))
   (define (%write-byte-to-stream fs data)
@@ -611,45 +595,154 @@
                              Unit))
         (cl:error () (Err (WriteError "Invalid Write Operation." ""))))))
   
-  (declare write-byte ((Result FileError (FileStream :a)) -> :a -> (Result FileError Unit)))
+  (declare write-byte ((FileStream :a) -> :a -> (Result FileError Unit)))
   (define (write-byte fs data)
+    "Writes a byte to the stream."
     (match fs
-      ((Ok s)
-       (match s
-         ((OutputStream stream)
-          (%write-byte-to-stream stream data))
-         ((TwoWayStream _in out)
-          (%write-byte-to-stream out data))
-         ((BroadcastStream streams)
-          (for s in streams
-               (%write-byte-to-stream s data))
-          (Ok Unit))
-         ((InputStream _)
-          (Err (WriteError "Invalid write operation:" "Target stream is Input only.")))))
-      ((Err r)
-       (Err r))))
+      ((OutputStream stream)
+       (%write-byte-to-stream stream data))
+      ((TwoWayStream _in out)
+       (%write-byte-to-stream out data))
+      ((BroadcastStream streams)
+       (for s in streams
+            (%write-byte-to-stream s data))
+       (Ok Unit))
+      ((InputStream _)
+       (Err (WriteError "Invalid write operation:" "Target stream is Input only.")))))
 
-  (declare %write-sequence (Streamable :a => (Result FileError (FileStream :a)) -> (iter:Iterator :a) -> (Result FileError Unit)))
+  (declare %write-sequence (Streamable :a => (FileStream :a) -> (iter:Iterator :a) -> (Result FileError Unit)))
   (define (%write-sequence fs sequence)
     (Ok (for element in sequence
-             (match (write fs element)
-               ((Err r)
-                (Return (Err r)))
-               ((Ok _a)
-                Unit)))))
+             (do
+              (written <- (write fs element))
+              (pure written)))))
 
   ;;
-  ;; Streamable class
+  ;; Other Stream functions
   ;;
+  (declare %force (FStream -> (Result FileError Unit)))
+  (define (%force fs)
+    (lisp :a (fs)
+      (cl:handler-case (Ok (cl:force-output fs))
+        (cl:error () (Err (StreamError "Force did not work."))))))
   
+  (declare force ((FileStream :a) -> (Result FileError Unit)))
+  (define (force fs)
+    "Forces output to a given stream. Force initiates the emptying of internal buffers but does not wait for completion."
+    (match fs
+      ((OutputStream f)
+       (%force f))
+      ((TwoWayStream _in out)
+       (%force out))
+      ((BroadcastStream streams)
+       (Ok (for s in streams
+                (%force s))))
+      ((InputStream _)
+       (Err (StreamError "Force output can't be used on input streams.")))))
+
+  (declare %finish (FStream -> (Result FileError Unit)))
+  (define (%finish fs)
+    (lisp :a (fs)
+      (cl:handler-case (Ok (cl:finish-output fs))
+        (cl:error () (Err (StreamError "Finish did not work."))))))
+
+  (declare finish ((FileStream :a) -> (Result FileError Unit)))
+  (define (finish fs)
+    "Attempts to ensure that any buffered output sent to output has reached its destination."
+    (match fs
+      ((OutputStream f)
+       (%force f))
+      ((TwoWayStream _in out)
+       (%force out))
+      ((BroadcastStream streams)
+       (Ok (for s in streams
+                (%force s))))
+      ((InputStream _)
+       (Err (StreamError "Finish output can't be used on input streams.")))))
+
+  (declare %clear (FStream -> (Result FileError Unit)))
+  (define (%clear fs)
+    (lisp :a (fs)
+      (cl:handler-case (Ok (cl:clear-output fs))
+        (cl:error () (Err (StreamError "Finish did not work."))))))
+
+  
+  (declare clear ((FileStream :a) -> (Result FileError Unit)))
+  (define (clear fs)
+    "Attempts to abort any outstanding output operation in order to allow as little output as possible to continue to the destination."
+    (match fs
+      ((OutputStream f)
+       (%force f))
+      ((TwoWayStream _in out)
+       (%force out))
+      ((BroadcastStream streams)
+       (Ok (for s in streams
+                (%force s))))
+      ((InputStream _)
+       (Err (StreamError "Finish output can't be used on input streams.")))))
+
+  ;;
+  ;; File Position
+  ;;
+  (declare %file-position (FStream -> (Result FileError UFix)))
+  (define (%file-position fs)
+    (lisp :a (fs)
+      (cl:handler-case (Ok (cl:file-position fs))
+        (cl:error () (Err (StreamError "File position can't be determined."))))))
+  
+  (declare file-position ((FileStream :a) -> (Result FileError UFix)))
+  (define (file-position fs)
+    "Returns the current position within a stream."
+    (match fs
+      ((OutputStream f)
+       (%file-position f))
+      ((TwoWayStream _in out)
+       (%file-position out))
+      ((BroadcastStream streams)
+       (%file-position (list:car streams)))
+      ((InputStream f)
+       (%file-position f))))
+
+  (declare %set-file-position (FStream -> UFix -> (Result FileError UFix)))
+  (define (%set-file-position fs i)
+    (lisp :a (fs i)
+      (cl:handler-case (Ok (cl:file-position fs i))
+        (cl:error () (Err (StreamError "File position can't be assigned."))))))
+  
+  (declare set-file-position ((FileStream :a) -> UFix -> (Result FileError UFix)))
+  (define (set-file-position fs i)
+    "Returns the current position within a string."
+    (match fs
+      ((OutputStream f)
+       (%set-file-position f i))
+      ((InputStream f)
+       (%set-file-position f i))
+      ((BroadcastStream streams) ;; this feels like a risky fix
+       (%set-file-position (list:car streams) i))
+      ;; this may not be supported
+      ((TwoWayStream _in out)
+       (%set-file-position out i))))
+
+  ;;
+  ;; Streamable class, top level access
+  ;;
   (define-class (Streamable :a)
     "A class of types which are able to be written to or read from a file."
-    (open (StreamOptions -> (Result FileError (Filestream :a))))
-    (close ((Result FileError (FileStream :a)) -> (Result FileError Unit)))
-    (read ((Result FileError (FileStream :a)) -> (Result FileError :a)))
-    (read-sequence ((Result FileError (FileStream :a)) -> (Result FileError (iter:Iterator :a))))
-    (write ((Result FileError (FileStream :a)) -> :a -> (Result FileError Unit)))
-    (write-sequence ((Result FileError (FileStream :a)) -> (iter:Iterator :a) -> (Result FileError Unit))))
+    (open           (StreamOptions   -> (Result FileError (Filestream :a))))
+    (close          ((FileStream :a) -> (Result FileError Unit)))
+    (read           ((FileStream :a) -> (Result FileError :a)))
+    (read-sequence  ((FileStream :a) -> (Result FileError (iter:Iterator :a))))
+    (write          ((FileStream :a) -> :a -> (Result FileError Unit)))
+    (write-sequence ((FileStream :a) -> (iter:Iterator :a) -> (Result FileError Unit))))
+
+  (declare with-open-file ((Streamable :a) => StreamOptions -> ((FileStream :a) -> (Result FileError :b)) -> (Result FileError :b)))
+  (define (with-open-file stream-options thunk)
+    "Opens a file stream and performs `thunk` on it"
+    (do
+     (stream <- (open stream-options))
+     (res <- (thunk stream))
+      (close stream)
+      (pure res)))
   
   (define-instance (Streamable Char)
     (define (open stream-options)
@@ -664,7 +757,55 @@
     (define (write fs data)
       (write-char fs data))
     (define (write-sequence fs sequence)
-      (%write-sequence fs sequence))))
+      (%write-sequence fs sequence)))
+
+  (declare write-string ((FileStream Char) -> String -> (Result FileError Unit)))
+  (define (write-string fs s)
+    "Writes a `string` to a FileStream."
+    (write-sequence fs (str:chars s)))
+
+  (declare write-line ((FileStream Char) -> String -> (Result FileError Unit)))
+  (define (write-line fs s)
+    "Writes a string with an appended newline to the filestream."
+    (write-sequence fs (Str:chars (lisp String (s)
+                                    (cl:format cl:nil "~a~%" s)))))
+
+  (declare read-file-string ((Into :a String) => :a -> (Result FileError String)))
+  (define (read-file-string path-string)
+    "Reads a file into a string, given a pathname string."
+    (with-open-file (Input (into path-string))
+      (fn (stream)
+        (do
+         (chars <- (read-sequence stream))
+         (pure (into (the (list Char) (iter:collect! chars))))))))
+
+  (declare %read-file-lines ((FileStream Char) -> (Result FileError (List String))))
+  (define (%read-file-lines fs)
+    "Reads a filestream into lines."
+    (let current-line = (cell:new Nil))
+    (let lines = (cell:new Nil))
+    (do
+     (chars <- (read-sequence fs))
+     (pure (progn
+             (iter:for-each!
+              (fn (c)
+                (cond ((== c (unwrap (char:code-char 10)))
+                       (cell:push! lines (the String (into (list:reverse (cell:read current-line)))))
+                       (cell:write! current-line Nil))
+                      (True
+                       (cell:push! current-line c)))
+                Unit)
+              chars)
+             (if (not (list:null? (cell:read current-line)))
+                 (cell:push! lines (the String (into (list:reverse (cell:read current-line)))))
+                 (list:reverse (cell:read lines)))))))
+
+  (declare read-file-lines ((Into :a String) => :a -> (Result FileError (List String))))
+  (define (read-file-lines path-string)
+    "Reads a file into lines, given a pathname string."
+    (with-open-file (Input (into path-string))
+      (fn (stream)
+        (%read-file-lines stream)))))
 
 ;;;
 ;;; Streamable definitions for Integer types
@@ -699,72 +840,37 @@
   (define-streamable I64)
   (define-streamable U64))
 
-;;;
-;;; Broader input/output functions.
-;;;
-
+;;; some examples/tests
 (coalton-toplevel
-
-  (declare write-string ((Result FileError (FileStream Char)) -> String -> (Result FileError Unit)))
-  (define (write-string fs s)
-    "Writes a `string` to a FileStream."
-    (write-sequence fs (str:chars s)))
-
-;;;
-;;; Probably throwaway test functions
-;;;
   
-  (declare test-open-read-close (Unit -> (Result FileError Unit)))
-  (define (test-open-read-close)
-    (let ((stream (open (Input (into "test.py")))))
-      (traceobject "Character read:" (the (Result FileError I8) (read stream)))
-      (close stream)))
+  (define (test1)
+    (with-open-file (Input "test.txt")
+      (fn (stream)
+        (read-char stream))))
+  
+  (declare test2 (Unit -> (Result FileError Char)))
+  (define (test2)
+    (with-open-file (Input "test.txt")
+      (fn (stream)
+        (read stream))))
 
-  (declare test-open-read-sequence-close (Unit -> (List Char)))
-  (define (test-open-read-sequence-close)
-    (let ((stream (the (Result FileError (FileStream Char))
-                       (open (Input (into "test.py")))))
-          (chrs (read-sequence stream)))
-      (close stream)
-      (iter:collect! (unwrap chrs))))
+  (declare test3 (Unit -> (Result FileError U8)))
+  (define (test3)
+    (with-open-file (Input "test.txt")
+      (fn (stream)
+        (read stream))))
 
-  (declare test-open-write-sequence-close (Unit -> (List Char)))
-  (define (test-open-write-sequence-close)
-    (let ((stream (the (Result FileError (FileStream Char))
-                       (open (Output (into "test.py") Append Create)))))
-      (write-sequence stream (str:chars "wow cool"))
-      (close stream)
-      (test-open-read-sequence-close)))
+  (define (test4)
+    (res:unwrap-or-error
+     (with-open-file (Input "test.txt")
+       (fn (stream)
+         (read-char stream)))))
 
+    (define (test5)
+    (res:unwrap-or-error
+     (with-open-file (Input "test.t")
+       (fn (stream)
+         (read-char stream))))))
 
-  (declare read-whole-file (Unit -> (Result FileError Unit)))
-  (define (read-whole-file)
-    (let ((stream (open (Input (into "test.py"))))
-          (fread (fn ()
-                   (match (the (Result FileError Char) (read stream))
-                     ((Ok x)
-                      (traceobject "Character read:" x)
-                      (fread))
-                     ((Err _r)
-                      Unit)))))
-      (fread)
-      (close stream))))
-
-#+ig
-(coalton-toplevel
-  #+ignore(define-instance (Streamable Integer)
-            (define (open stream-options)
-              (the (Proxy Integer)
-                   (types:runtime-repr proxy-inner))
-              (let p = types:Proxy)
-              (let p_ = (types:proxy-inner p))
-              (let type = (types:runtime-repr p_))
-              (type:as-proxy-of
-               )
-              ;; (the (proxy Integer))
-              (let ((type ())
-                    )
-                (match )))))
-                                     
 #+sb-package-locks
 (sb-ext:lock-package "COALTON-LIBRARY/FILE")
