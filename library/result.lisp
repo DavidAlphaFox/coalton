@@ -11,7 +11,9 @@
    #:ok?
    #:err?
    #:map-err
-   #:flatten))
+   #:flatten
+   #:unwrap-or-error
+   #:unwrap-or-warn))
 
 (in-package #:coalton-library/result)
 
@@ -51,6 +53,14 @@
     (match x
       ((Ok x) x)
       ((Err x) x)))
+
+  (declare unwrap-or-error (Signalable :a => (Result :a :b) -> :b))
+  (define (unwrap-or-error x)
+    "Unwraps a `result` or signals an error."
+    (match x
+      ((Ok x) x)
+      ((Err x)
+       (error x))))
 
   ;;
   ;; Instances
