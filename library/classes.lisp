@@ -257,11 +257,9 @@
   (define-instance (Into :a :a)
     (define (into x) x))
 
-  (define-class (TryInto :a :b)
-    "TRY-INTO implies some elements of `:a` can be represented exactly by an element of :b, but sometimes not. If not, an error string is returned."
-    ;; Ideally we'd have an associated-type here instead of locking in
-    ;; on String.
-    (tryInto (:a -> Result String :b)))
+  (define-class (TryInto :a :b :c)
+    "`TRY-INTO` implies some elements of `:a` can be represented exactly by an element of `:c`, but sometimes not. If not, an error type `:b` is returned."
+    (tryInto (:a -> Result :b :c)))
 
   (define-instance (Iso :a :a))
 

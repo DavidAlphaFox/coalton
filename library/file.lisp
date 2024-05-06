@@ -14,6 +14,8 @@
    (#:types #:coalton-library/types)
    (#:str #:coalton-library/string)
    (#:char #:coalton-library/char))
+  ;; TODO
+  (:documentation "")
   (:export
    
    #:Pathname
@@ -174,31 +176,23 @@
 
 (coalton-toplevel
 
-  (define-class (TryintoPathname :a)
-    (tryinto-pathname (:a -> (Result FileError Pathname))))
-
-  (define-instance (TryIntoPathname String)
-    (define (tryinto-pathname s)
+  (define-instance (TryInto String FileError Pathname)
+    (define (tryinto s)
       (lisp (Result FileError Pathname) (s)
         (cl:handler-case (Ok (cl:pathname s))
           (cl:error ()                
             (Err (TryintoPathnameError "Invalid pathname string:" s)))))))
 
-  (define-instance (TryIntoPathname Pathname)
-    (define (tryinto-pathname s)
-      (Ok s)))
+  (define-instance (TryInto Pathname FileError Pathname)
+    (define (tryinto x)
+      (Ok x)))
   
-  (define-instance (Into Pathname String)
-    (define (into p)
-      (lisp String (p)
-        (cl:namestring p))))
-  
-  (declare merge ((TryintoPathname :a) (TryintoPathname :b) => :a -> :b -> (Result FileError Pathname)))
+  (declare merge ((Tryinto :a FileError Pathname) (Tryinto :b FileError Pathname) => :a -> :b -> (Result FileError Pathname)))
   (define (merge path1 path2)
     "Merges two pathnames together. The order is important- for adding subdirectories, make sure to put the subpath (the one without the leading `/`) in `path1`."
     (do
-     (p1 <- (tryinto-pathname path1))
-     (p2 <- (tryinto-pathname path2))
+     (p1 <- (the (Result FileError Pathname) (tryinto path1)))
+     (p2 <- (the (Result FileError Pathname) (tryinto path2)))
       (pure (lisp Pathname (p1 p2)
               (cl:merge-pathnames p1 p2))))))
 
@@ -208,29 +202,63 @@
 
 (coalton-toplevel
 
-  (declare exists? ((TryintoPathname :a) => :a -> (Result FileError Boolean)))
-  (define (exists? path)
-    "Returns whether a file or directory exists."
-    (do
-     (p <- (tryinto-pathname path))
-     (pure (lisp Boolean (p)
-             (to-boolean (cl:probe-file p))))))
+  
 
-  (declare directory? ((TryintoPathname :a) => :a -> (Result FileError Boolean)))
-  (define (directory? path)
-    "Returns whether a path represents a directory."
+  (declare valid-directory-path? ((Tryinto :a FileError Pathname) => :a -> (Result FileError Boolean)))
+  (define (valid-directory-path? path)
+    "Returns whether a pathname is a valid directory pathname. Specifically it checks whether it has a trailing `/`."
     (do
-     (p <- (tryinto-pathname path))
+     (p <- (the (Result FileError Pathname) (tryinto path)))
      (pure (lisp Boolean (p)
              (cl:not (to-boolean (uiop:file-pathname-p p)))))))
 
-  (declare file? ((TryintoPathname :a) => :a -> (Result FileError Boolean)))
-  (define (file? path)
-    "Returns whether a path represents a file."
+  (declare valid-file-path? ((Tryinto :a FileError Pathname) => :a -> (Result FileError Boolean)))
+  (define (valid-file-path? path)
+    "Returns whether a pathname is a valid file pathname."
     (do
-     (p <- (tryinto-pathname path))
+     (p <- (the (Result FileError Pathname) (tryinto path)))
      (pure (lisp Boolean (p)
-             (to-boolean (uiop:file-pathname-p p)))))))
+             (to-boolean (uiop:file-pathname-p p))))))
+
+  (declare exists? ((Tryinto :a FileError Pathname) => :a -> (Result FileError Boolean)))
+  (define (exists? path)
+    "Returns whether a file or directory exists."
+    (do
+     (p <- (the (Result FileError Pathname) (tryinto path)))
+     (pure (lisp Boolean (p)
+             (to-boolean (cl:probe-file p))))))
+  
+  (declare directory-exists? ((Tryinto :a FileError Pathname) => :a -> (Result FileError Boolean)))
+  (define (directory-exists? path)
+    "Returns whether a pathname represents an existing directory."
+    (do
+     (p <- (the (Result FileError Pathname) (tryinto path)))
+     (is-dir <- (valid-directory-path? p))
+      (if is-dir
+          (Ok
+           (lisp Boolean (p)
+             (to-boolean (uiop:directory-exists-p p))))
+          (Err (PathError "Pathname is not a valid directory path." p)))))
+
+  (declare file-exists? ((Tryinto :a FileError Pathname) => :a -> (Result FileError Boolean)))
+  (define (file-exists? path)
+    "Returns whether a pathname represents an existing file."
+    (do
+     (p <- (the (Result FileError Pathname) (tryinto path)))
+     (is-file  <- (valid-file-path? p))
+      (if is-file
+          (Ok (lisp Boolean (p)
+               (to-boolean (uiop:file-exists-p p))))
+          (Err (PathError "Pathname is not a valid file path." p)))))
+
+  (declare if-directory ((Tryinto :a FileError Pathname) => :a -> (Pathname -> (Result FileError :b)) -> (Result FileError :b)))
+  (define (if-directory path action)
+    (do
+     (p <- (the (Result FileError Pathname) (tryinto path)))
+     (dir <- (valid-directory-path? p))
+      (if dir
+          (action p)
+          (Err (PathError "This path does not represent a directory. Please add a trailing `\`." p))))))
 
 ;;;
 ;;; Working with directories
@@ -238,86 +266,69 @@
 
 (coalton-toplevel
   
-  (declare create-directory ((TryintoPathname :a) => :a -> (Result FileError Pathname)))
+  (declare create-directory ((Tryinto :a FileError Pathname) => :a -> (Result FileError Pathname)))
   (define (create-directory path)
-    "This is equivalent to `mkdirp`. Makes a directory or chain of directories if they don't already exist. The pathname must end with a trailing `/`."
-    (do
-     (p <- (tryinto-pathname path))
-     (dir <- (directory? p))
-      (if dir
-          (Ok (lisp Pathname (p)
-                (cl:ensure-directories-exist p)))
-          (Err (PathError "This path does not represent a directory:" p)))))
+    "This is equivalent to `mkdir -p`. Creates a directory and its parents. The pathname must end with a trailing `/`."
+    (if-directory path
+                  (fn (p)
+                    (pure (lisp Pathname (p)
+                            (cl:ensure-directories-exist p))))))
 
-  (declare ensure-directories ((TryintoPathname :a) => :a -> (Result FileError Unit)))
-  (define (ensure-directories path)
-    "Ensures that a directory or chain of directories exists. The pathname can end with either a file or directory; ending with a file will ensure all directories above that file, ending with a directory (with a trailing '/') will ensure all directories above and including that directory."
-    (do
-     (p <- (tryinto-pathname path))
-     (pure (lisp Unit (p)
-             (cl:ensure-directories-exist p)
-             Unit))))
-
-  (declare directory-files ((TryintoPathname :a) => :a -> (Result FileError (List Pathname))))
+  (declare directory-files ((Tryinto :a FileError Pathname) => :a -> (Result FileError (List Pathname))))
   (define (directory-files path)
     "Returns all files within the directory. Returns an error if the pathname does not represent a directory."
-    (do
-     (p <- (tryinto-pathname path))
-     (dir <- (directory? p))
-      (if dir
-          (Ok (lisp (List Pathname) (p)
-                (uiop:directory-files p)))
-          (Err (PathError "Pathname does not represent a directory. Please add a trailing `\`." p)))))
+    (if-directory path
+                  (fn (p)
+                    (pure (lisp (List Pathname) (p)
+                            (uiop:directory-files p))))))
 
-  (declare subdirectories ((TryintoPathname :a) => :a -> (Result FileError (List Pathname))))
+  (declare subdirectories ((Tryinto :a FileError Pathname) => :a -> (Result FileError (List Pathname))))
   (define (subdirectories path)
     "Returns all subdirectories within the directory. Returns an error if the pathname does not represent a directory."
-    (do
-     (p <- (tryinto-pathname path))
-     (dir <- (directory? p))
-      (if dir
-          (Ok (lisp (List Pathname) (path)
-                (uiop:subdirectories path)))
-          (Err (PathError "Pathname does not represent a directory. Please add a trailing `\`." p)))))
+    (if-directory path
+                  (fn (p)
+                    (pure (lisp (List Pathname) (p)
+                            (uiop:subdirectories p))))))
 
   ;;
   ;; Handling directory behavior that depends on emptiness
   ;;
   
-  (declare empty? ((TryintoPathname :a) => :a -> (Result FileError Boolean)))
+  (declare empty? ((Tryinto :a FileError Pathname) => :a -> (Result FileError Boolean)))
   (define (empty? path)
     "Checks whether a directory is empty."
-    (do
-     (p <- (tryinto-pathname path))
-     (dir <- (directory? p))
-      (if dir
-          (Ok (and (list:null? (unwrap (directory-files p)))
-                   (list:null? (unwrap (subdirectories p)))))
-          (Err (PathError "Pathname does not represent a directory" p)))))
+    (if-directory path
+                  (fn (p)
+                    (pure (lisp Boolean (p)
+                            (cl:null (uiop:directory* p)))))))
 
-  (declare remove-directory ((TryintoPathname :a) => :a -> (Result FileError Unit)))
+  (declare if-empty ((Tryinto :a FileError Pathname) => :a -> (Pathname -> (Result FileError :b)) -> (Result FileError :b)))
+  (define (if-empty path action)
+    "Performs an action only if the directory is empty."
+    (if-directory path
+                  (fn (p)
+                    (do
+                     (empty <- (empty? p))
+                     (if empty
+                         (action p)
+                         (Err (PathError "Directory is not empty:" p)))))))
+
+  (declare remove-directory ((Tryinto :a FileError Pathname) => :a -> (Result FileError Unit)))
   (define (remove-directory path)
     "Deletes a directory `dir` if it's empty, otherwise, returns`FileError`."
-    (do
-     (p <- (tryinto-pathname path))
-     (mt <- (empty? p))
-      (if mt
-          (Ok (Lisp Unit (p)
-                (uiop:delete-empty-directory p)
-                Unit))
-          (Err (PathError "Directory is not empty:" p)))))
+    (if-empty path
+              (fn (p)
+                (pure (lisp Unit (p)
+                        (uiop:delete-empty-directory p))))))
   
-  (declare remove-directory-unsafe ((TryintoPathname :a) => :a -> (Result FileError Unit)))
+  (declare remove-directory-unsafe ((Tryinto :a FileError Pathname) => :a -> (Result FileError Unit)))
   (define (remove-directory-unsafe path)
-    "Deletes a target directory recursively. Equivalent to `rm -r`. Errors if the path is not a directory (if the path wasn't a directory, this would remove the path's parent directory)."
-    (do
-     (p <- (tryinto-pathname path))
-     (dir <- (directory? p))
-      (if dir
-              (Ok (lisp Unit (path)
-                    (uiop:delete-directory-tree path :validate cl:t)
-                    Unit))
-              (Err (PathError "Path does not represent a directory." p)))))
+    "Deletes a target directory recursively. Equivalent to `rm -r`. Errors if the path is not a directory."
+    (if-directory path
+                  (fn (p)
+                    (pure (lisp Unit (p)
+                            (uiop:delete-directory-tree p :validate cl:t)
+                            Unit)))))
   
   (declare system-relative-pathname ((Into :a String) => :a -> String -> (Result FileError Pathname)))
   (define (system-relative-pathname system-name name)
